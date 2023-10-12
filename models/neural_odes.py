@@ -102,7 +102,6 @@ class Dynamics(nn.Module):
         """
         The output of the class -> f(x(t), u(t)).
         f(x(t), u(t)) = f(x,u^k)
-        
         """
         dt = self.T/self.time_steps   #here was no -1 before which does not fit with adjoint solver otherwise
         k = int(t/dt)
@@ -198,9 +197,6 @@ class adj_Dynamics(nn.Module):
         self.hidden_dim = hidden_dim
         self.T = T
 
-        
-        
-
         if non_linearity not in activations.keys() or architecture not in architectures.keys():
             raise ValueError("Activation function or architecture not found. Please reconsider.")
         
@@ -239,17 +235,16 @@ class adj_Dynamics(nn.Module):
         out = -torch.matmul(out,p)
         out = out.squeeze() #remove the reshaping
 
-       
-
         # out = x.matmul(w_t.t())+b_t
         # out = self.non_linearity(out) #this should have dimension d
         # out = torch.diag(out) #this should make a diagonal d times d matrix out of it
         # out = out.matmul(w_t.t()) #prime_simga matrix times weights
         # out = - out.matmul(p) # -Dxf(u,x) * p .... p is the variable, x is fixed, we need to solve for p
 
-        
         return out
-class Semiflow(nn.Module):  #this should allow to calculate the flow for dot(x) = f(u,x) AND dot(p) = -Dxf(u,x)p
+
+
+class Semiflow(nn.Module):  # this should allow to calculate the flow for dot(x) = f(u,x) AND dot(p) = -Dxf(u,x)p
     """
     Given the dynamics f, generate the semiflow by solving x'(t) = f(u(t), x(t)).
     We concentrate on the forward Euler method - the user may change this by using
@@ -267,8 +262,6 @@ class Semiflow(nn.Module):  #this should allow to calculate the flow for dot(x) 
         self.tol = tol
         self.T = T
         self.time_steps = time_steps
-        
-
 
     def forward(self, x, eval_times=None):
     
@@ -290,6 +283,7 @@ class Semiflow(nn.Module):  #this should allow to calculate the flow for dot(x) 
             out = odeint_adjoint(self.dynamics, x_aug, integration_time, method='euler', options={'step_size': dt})
             
             # out = odeint_adjoint(self.dynamics, x_aug, integration_time, method='dopri5', rtol = 0.1, atol = 0.1)
+        
         else:
             out = odeint(self.dynamics, x_aug, integration_time, method='euler', options={'step_size': dt})
             # out = odeint(self.dynamics, x_aug, integration_time, method='dopri5', rtol = 0.1, atol = 0.1)
