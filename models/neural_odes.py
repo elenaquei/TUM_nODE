@@ -93,10 +93,12 @@ class Dynamics(nn.Module):
             ##-- R^{d_hid} -> R^{d_aug} layer --
             blocks3 = [nn.Linear(hidden_dim, self.input_dim) for _ in range(self.time_steps)]
             self.fc3_time = nn.Sequential(*blocks3)
+            print('in Dynamics 1 parameter dim =', hidden_dim, 'input dim = ', self.input_dim) # TODO : REMOVE
         else:
             ##-- R^{d_hid} -> R^{d_hid} layer --
             blocks = [nn.Linear(hidden_dim, hidden_dim) for _ in range(self.time_steps)]
             self.fc2_time = nn.Sequential(*blocks)
+            print('in Dynamics 2 parameter dim =', hidden_dim, 'input dim = ', self.input_dim) # TODO : REMOVE
         
     def forward(self, t, x):
         """
@@ -128,7 +130,7 @@ class Dynamics(nn.Module):
             out2 = torch.sqrt(self.non_linearity(-x.matmul(w1_t.t())+torch.ones(self.hidden_dim) + b1_t) + 1e-6*torch.ones(self.hidden_dim))-torch.sqrt(1e-6*torch.ones(self.hidden_dim))
             out = torch.min(out1, out2)
             out = out.matmul(w2_t.t())
-        return out
+        return out - 0.5 * x # TODO: cancel gamma
 
 
 class Dynamics_reduced(nn.Module):
@@ -154,6 +156,7 @@ class Dynamics_reduced(nn.Module):
         
         self.weights = nn.ParameterList([nn.Parameter(torch.randn(self.input_dim)) for _ in range(self.time_steps)])
         self.bias = nn.ParameterList([nn.Parameter(torch.randn(self.input_dim)) for _ in range(self.time_steps)])
+        print('in Dynamics_reduced parameter dim = input dim = ', self.input_dim) # TODO : REMOVE
         # self.outer_weights = nn.ParameterList([nn.Parameter(torch.randn(self.input_dim)) for _ in range(self.time_steps)])
     
     def forward(self, t, x):
@@ -322,6 +325,9 @@ class NeuralODE(nn.Module):
         self.data_dim = data_dim
         self.hidden_dim = hidden_dim
         self.augment_dim = augment_dim
+
+        print('in NeuralODE parameter dim =', hidden_dim, 'data dim = ', self.data_dim) # TODO : REMOVE
+        
         if output_dim == 1 and cross_entropy: 
             #output_dim = 1 pour MSE; >=2 pour cross entropy for binary classification.
             raise ValueError('Incompatible output dimension with loss function.')

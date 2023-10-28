@@ -6,6 +6,7 @@
 import json
 import torch.nn as nn
 import numpy as np
+import scipy
 from numpy import mean
 import torch
 # from torch.utils.tensorboard import SummaryWriter
@@ -611,6 +612,53 @@ def create_dataloader(data_type, batch_size = 3000, noise = 0.15, factor = 0.15,
         X, y = make_moons(batch_size, noise = noise, shuffle = shuffle , random_state = random_state)
     
     
+    elif data_type == 'TS':
+        size = [batch_size, 2]   #dimension of the pytorch tensor to be generated
+        low,high = 0,1 #range of uniform distribution
+
+        X = torch.distributions.uniform.Uniform(low,high).sample(size)
+        def toggleswitch(x, t):
+            #p = (0.25,5,1,1)
+            #(S,n,k21,k12) = p
+            S = 0.25
+            n = 5
+            k21 = 1
+            k12 = 1
+            A = np.array([[0, k21], [k12, 0]])
+            Ax = np.matmul(A,x)
+            act_x = np.tanh(Ax) #S**n/(S**n + Ax**n)
+            y = act_x - 0.5*x
+            return y
+        deltat = 0.5
+        y = np.array([scipy.integrate.odeint(toggleswitch,X[i,:],[0,deltat])[-1,:] for i in range(batch_size)])
+        
+        #np.array((X[:, 0] > X[:, 1]).float())
+        # y = y.to(torch.int64)
+        X = torch.abs(X + noise * torch.randn(X.shape))
+        
+    elif data_type == 'repr': # REPRESSILATOR
+        
+        size = [batch_size, 3]   #dimension of the pytorch tensor to be generated
+        low,high = 0,2 #range of uniform distribution
+
+        X = torch.distributions.uniform.Uniform(low,high).sample(size)
+        
+        def repressilator(xyz, t):
+            x, y, z = xyz[0], xyz[1], xyz[2]
+            n = 5
+            gamma, lx, ly, lz, deltax, deltay, deltaz, thetax, thetay, thetaz = 0.5, 0.01, 0.02, 0.03, 0.1, 0.2, 0.3, 1, 2, 3
+            x_dot = - gamma * x + lx + deltax * thetax**n / (thetax**n + z**n)
+            y_dot = - gamma * y + ly + deltay * thetay**n / (thetay**n + x**n)
+            z_dot = - gamma * z + lz + deltaz * thetaz**n / (thetaz**n + y**n)
+            return np.array([x_dot, y_dot, z_dot])
+        
+        deltat = 0.5
+        y = np.array([scipy.integrate.odeint(repressilator,X[i,:],[0,deltat])[-1,:] for i in range(batch_size)])
+        
+        #np.array((X[:, 0] > X[:, 1]).float())
+        # y = y.to(torch.int64)
+        X = torch.abs(X + noise * torch.randn(X.shape))
+    
     elif data_type == 'xor':
         X = torch.randint(low=0, high=2, size=(batch_size, 2), dtype=torch.float32)
         y = np.logical_xor(X[:, 0] > 0, X[:, 1] > 0).float()
@@ -623,12 +671,17 @@ def create_dataloader(data_type, batch_size = 3000, noise = 0.15, factor = 0.15,
         return None, None
     
     if label == 'vector':
-        y = np.array([(2., 0.) if label == 1 else (-2., 0.) for label in y])
+        if data_type == 'TS' or data_type == 'repr':
+            print('N change in TS or repr data')
+            #y = np.array([(1., 0.) if label == 1 else (0., 1.) for label in y])
+        else:
+            y = np.array([(2., 0.) if label == 1 else (-2., 0.) for label in y])
+        
 
     g = torch.Generator()
     g.manual_seed(random_state)
     
-    X = StandardScaler().fit_transform(X)
+    # X = StandardScaler().fit_transform(X)
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=.2, random_state=random_state, shuffle = shuffle)
 
     X_train = torch.Tensor(X_train) # transform to torch tensor for dataloader
