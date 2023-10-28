@@ -93,12 +93,10 @@ class Dynamics(nn.Module):
             ##-- R^{d_hid} -> R^{d_aug} layer --
             blocks3 = [nn.Linear(hidden_dim, self.input_dim) for _ in range(self.time_steps)]
             self.fc3_time = nn.Sequential(*blocks3)
-            print('in Dynamics 1 parameter dim =', hidden_dim, 'input dim = ', self.input_dim) # TODO : REMOVE
         else:
             ##-- R^{d_hid} -> R^{d_hid} layer --
             blocks = [nn.Linear(hidden_dim, hidden_dim) for _ in range(self.time_steps)]
             self.fc2_time = nn.Sequential(*blocks)
-            print('in Dynamics 2 parameter dim =', hidden_dim, 'input dim = ', self.input_dim) # TODO : REMOVE
         
     def forward(self, t, x):
         """
@@ -156,7 +154,6 @@ class Dynamics_reduced(nn.Module):
         
         self.weights = nn.ParameterList([nn.Parameter(torch.randn(self.input_dim)) for _ in range(self.time_steps)])
         self.bias = nn.ParameterList([nn.Parameter(torch.randn(self.input_dim)) for _ in range(self.time_steps)])
-        print('in Dynamics_reduced parameter dim = input dim = ', self.input_dim) # TODO : REMOVE
         # self.outer_weights = nn.ParameterList([nn.Parameter(torch.randn(self.input_dim)) for _ in range(self.time_steps)])
     
     def forward(self, t, x):
@@ -223,7 +220,6 @@ class adj_Dynamics(nn.Module):
         dt = self.T/time_steps
         k = int(t/dt)
 
-        
         #we need the backwards time weights
         w_t = self.f_dynamics.fc2_time[time_steps - k - 1].weight 
         b_t = self.f_dynamics.fc2_time[time_steps - k - 1].bias

@@ -20,10 +20,6 @@ from torch.utils import data as data
 from torch.utils.data import DataLoader, TensorDataset
 
 
-
-
-
-
 losses = {'mse': nn.MSELoss(), 
           'cross_entropy': nn.CrossEntropyLoss(), 
           'ell1': nn.SmoothL1Loss()
@@ -672,7 +668,7 @@ def create_dataloader(data_type, batch_size = 3000, noise = 0.15, factor = 0.15,
     
     if label == 'vector':
         if data_type == 'TS' or data_type == 'repr':
-            print('N change in TS or repr data')
+            print('No change  applied to TS or repr data')
             #y = np.array([(1., 0.) if label == 1 else (0., 1.) for label in y])
         else:
             y = np.array([(2., 0.) if label == 1 else (-2., 0.) for label in y])
