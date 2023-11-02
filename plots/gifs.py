@@ -61,9 +61,6 @@ def trajectory_gif(model, inputs, targets, timesteps, dpi=200, alpha=0.9,
         raise RuntimeError("Name must end in with .gif, but ends with {}".format(filename))
     base_filename = filename[:-4]
     
-    
-        
-
     ## We focus on 3 colors at most
     if len(targets.shape) == 1 and False in (t < 2 for t in targets): 
         color = ['mediumpurple' if targets[i] == 2.0 else 'gold' if targets[i] == 0.0 else 'mediumseagreen' for i in range(len(targets))]
@@ -72,7 +69,6 @@ def trajectory_gif(model, inputs, targets, timesteps, dpi=200, alpha=0.9,
         if len(targets.shape) > 1: #checks if labels are in form of scalars (for cross entropy) or vectors (for square loss)
             color = ['C1' if targets[i,0] > 0.0 else 'C0' for i in range(len(targets))]
         else:
-            
             color = ['C1' if targets[i] > 0.0 else 'C0' for i in range(len(targets))]
 
     trajectories = model.flow.trajectory(inputs, timesteps).detach()
@@ -144,8 +140,6 @@ def trajectory_gif(model, inputs, targets, timesteps, dpi=200, alpha=0.9,
                     y_traj = interp_y[i](_time)[:t+1]
                     plt.plot(x_traj, y_traj, c=color[i], alpha=alpha_line, linewidth = 0.75, zorder=1)
             
-        
-            
         elif num_dims == 3:
             fig = plt.figure()
             ax = Axes3D(fig)
@@ -189,8 +183,7 @@ def trajectory_gif(model, inputs, targets, timesteps, dpi=200, alpha=0.9,
         imgs.append(imageio.imread(img_file))
         if i not in [0, interp_time//5, interp_time//2, interp_time-1]: os.remove(img_file) 
     imageio.mimwrite(filename, imgs, duration = 500)
-    
-    
+
 
 def normalize(x):
     """

@@ -178,8 +178,6 @@ class Dynamics_reduced(nn.Module):
         return layer_output
 
 
-
-
 class adj_Dynamics(nn.Module):
     """
     Structure of the adjoint dynamics. given nODE dot(x(t)) = f(u(t), x(t)) gives structure for
@@ -322,8 +320,6 @@ class NeuralODE(nn.Module):
         self.hidden_dim = hidden_dim
         self.augment_dim = augment_dim
 
-        print('in NeuralODE parameter dim =', hidden_dim, 'data dim = ', self.data_dim) # TODO : REMOVE
-        
         if output_dim == 1 and cross_entropy: 
             #output_dim = 1 pour MSE; >=2 pour cross entropy for binary classification.
             raise ValueError('Incompatible output dimension with loss function.')
