@@ -105,6 +105,19 @@ trainer_anode = doublebackTrainer(anode, optimizer_anode, device, cross_entropy=
                          bound=bound, fixed_projector=fp, verbose = True, eps_comp = 0.2) 
 trainer_anode.train(dataloader, num_epochs)
 
+# %% [markdown]
+# ### Check the basins of attraction
+
+# %%
+from plots.plots import classification_levelsets
+
+classification_levelsets(anode, 'classification_levelsets')
+
+from IPython.display import Image
+
+img1 = Image(filename = 'classification_levelsets' + '.png', width = 400)
+display(img1)
+
 # %%
 for X_viz, y_viz in dataloader_viz:
     X_viz = X_viz[0:5]
@@ -113,56 +126,6 @@ for X_viz, y_viz in dataloader_viz:
 trajectories = anode.flow.trajectory(X_viz, 10).detach()
 print(X_viz)
 print(trajectories.size()) #time is in the first coordinate
-
-# %% [markdown]
-# ## Lyapunov exponent computation - rough approximation
-
-# %%
-'''
-input: two trajectories x(t), y(t) where each has size (x_dim,len_t)
-output: maximum lyapunov exponent for each time t, size (1,len_t)'''
-def le(x,y,t):
-    d = x - y
-    d = torch.linalg.norm(x - y, dim = 0)
-    # print(f'{d.shape = }')
-    d = d/d[0]
-    d = np.log(d)
-    
-
-    d = d/t
-    return d
-
-
-
-'''
-Compute the maximum Lyapunov exponent with initial value tolerance eps
-input: 
-trajectories of size (x_amount,x_amount,x_dim,time_dim)
-each trajectory has initial value x_0 = traj[i,j,:,0]
-
-output:
-MLE for each trajectory as averaged LE for all initial values that is eps close to the initial value
-output size (x_amount,x_amount,t_dim)
-'''
-def MLE(traj, t, eps = 0.1):
-    x_amount = traj.size(0)
-    x_amount, y_amount, x_dim, t_dim = traj.shape
-    le_val = torch.zeros((x_amount, y_amount, t_dim)) 
-    print(f'{le_val.shape = }')
-    for i in range(x_amount):
-        for j in range(y_amount):
-            count = 0
-            for i_comp in range(x_amount):
-                for j_comp in range(y_amount):
-                    if (torch.norm(traj[i,j,:,0] - traj[i_comp,j_comp,:,0]) < eps and not(i == i_comp and j == j_comp)):
-                        count += 1
-                        le_val[i,j] += le(traj[i,j,:,:],traj[i_comp,j_comp,:,:],t)
-                        #print('avg le update with count ',count,' and value ',le_val[i,j,-1])
-            if count > 1:
-                le_val[i,j,:] = le_val[i,j,:]/count
-    return le_val
-
-
 
 # %% [markdown]
 # ## Computation of the Maximal Lyapunov Exponent by integration 
@@ -176,66 +139,47 @@ In this section, the set of function definitions needed to compute the Maximal L
 import numpy as np
 import scipy
 
-def linear_dynamics(node):
+def linear_dynamics(node, derivative):
     '''
     Takes as input a nODE and return the augmented (flattened) linear system (f(x), Df(x)Y) as a 
     function of (x,Y) and t (flattened)
     '''
-    f_x = node.flow.dynamics.forward
+    if isinstance(node, NeuralODE):
+        f_x = node.flow.dynamics.forward
+        isnode = True
+    else:
+        f_x = node
+        isnode = False
     
     def composed_lin_ODE(x_and_Y,t):
         '''
         Build the extended right hand side of the augmented (flattened) linear system (f(x), Df(x)Y)
         '''
-        size_x = node.data_dim
+        size_x = int((-1 + np.sqrt(1 + 4 * x_and_Y.size))/2)
         x = x_and_Y[:size_x]
         Y = np.reshape(x_and_Y[size_x:], [size_x, size_x])
-        x_torch = torch.from_numpy(x).type(torch.float32)
-        x_torch.requires_grad=True
+        if isnode:
+            x_torch = torch.from_numpy(x).type(torch.float32)
+            x_torch.requires_grad=True
+        else:
+            x_torch = x
         f_x_torch = f_x(t, x_torch)
+        if isnode:
+            f_x_torch = f_x_torch.detach().numpy()
+        
         def f_x_t(x):
             return f_x(t, x)
-        Df_x = torch.autograd.functional.jacobian(f_x_t, x_torch) # is it numerical?
-        f_of_x = f_x_torch.detach().numpy()
-        Dfx_Y = np.matmul(Df_x.numpy(), Y).flatten()
-        rhs = np.concatenate((f_of_x, Dfx_Y))
+        Df_x = derivative(f_x_t, x_torch)
+        if isnode: 
+            Df_x = Df_x.numpy()
+        Dfx_Y = np.matmul(Df_x, Y).flatten()
+        rhs = np.concatenate((f_x_torch, Dfx_Y))
         return rhs
     
     return composed_lin_ODE
 
-"""
-def local_FTLE(node, x, integration_time, dt = 0.05, n_exponents = 2):
-    '''
-    Full Maximal Lyapunov exponent computation, based on the lynear_dynamics function
-    '''
-    time_array = np.arange(0, integration_time, dt)
-    n_exponents = x.size
-    Jac = np.identity(x.size)#[:,:n_exponents]
-    x_and_Jac_t = np.concatenate((x,Jac.flatten()))
-    select_Jac_int = lambda mat: np.reshape(mat[-1,x.size:],[x.size,n_exponents])
-    select_x_int = lambda mat: mat[-1,:x.size]
-    L = np.zeros(n_exponents)
-    iters = np.floor(integration_time/dt/10).astype(int)
-    start_time = 0
-    length_iter = dt * 10
-    n_start_iter = 5
-    n_used_iter = iters - n_start_iter
-    used_time = n_used_iter * length_iter
-    for i in range(iters):
-        time_array_iter = start_time + np.arange(0, length_iter, dt)
-        start_time = time_array_iter[-1]
-        x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, n_exponents), x_and_Jac_t, time_array_iter)
-        Jac_t = select_Jac_int(x_and_Jac_t)
-        Q_t, R_t = np.linalg.qr(Jac_t)
-        x_and_Jac_t = np.concatenate((select_x_int(x_and_Jac_t),Q_t.flatten()))
-        if i > n_start_iter:
-            # print(R_t)
-            L += np.log(np.diagonal(R_t))
-    # L = np.reshape(forward_integral[-1,x.size:],[x.size,x.size])
-    
-    return L/used_time"""
 
-def local_FTLE(node, x, integration_time, dt = 0.5):
+def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functional.jacobian):
     '''
     Full Maximal Lyapunov exponent computation, based on the lynear_dynamics function
     '''
@@ -244,9 +188,9 @@ def local_FTLE(node, x, integration_time, dt = 0.5):
     x_and_Jac_t = np.concatenate((x,Jac.flatten()))
     select_Jac_int = lambda mat: np.reshape(mat[-1,x.size:],[x.size,x.size])
     select_x_int = lambda mat: mat[-1,:x.size]
-    L = np.zeros_like(x)
+    L = np.zeros(x.size)
     start_time = 0
-    length_iter = dt * 5
+    length_iter = dt * 15
     n_start_iter = 10
     iters = np.floor(integration_time/length_iter).astype(int)
     n_used_iter = iters - n_start_iter
@@ -254,7 +198,14 @@ def local_FTLE(node, x, integration_time, dt = 0.5):
     for i in range(iters):
         time_array_iter = start_time + np.arange(0, length_iter, dt)
         start_time = time_array_iter[-1]
-        x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node), x_and_Jac_t, time_array_iter)
+        #print(time_array_iter)
+        if isinstance(node, NeuralODE):
+            # print('is node')
+            x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, torch.autograd.functional.jacobian), x_and_Jac_t, time_array_iter)
+        else:
+            # print('is not node')
+            x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, der), x_and_Jac_t, time_array_iter)
+        
         Jac_t = select_Jac_int(x_and_Jac_t)
         Q_t, R_t = np.linalg.qr(Jac_t)
         if i > n_start_iter:
@@ -267,9 +218,35 @@ def local_FTLE(node, x, integration_time, dt = 0.5):
             L += np.log(np.diagonal(R_t)) # the QR decomposition seems to, at times, give negative Rs, why??
         x_and_Jac_t = np.concatenate((select_x_int(x_and_Jac_t),Q_t.flatten()))
     #print(R_t, L)
-    return np.max(L/used_time)
+    return (L/used_time)
 
 
+
+# %%
+## easier test case
+def linear_function(x):
+    # A = np.random.rand(x.size,x.size)
+    A = np.array([[-1,-1],[1,0]])
+    print('Eigenvalues = ', np.linalg.eig(A).eigenvalues)
+    def func(t, x_func):
+        return np.matmul(A,x_func)
+    def derivative(t, x_func):
+        return A
+    return func, derivative
+
+
+# %%
+lin_func, der = linear_function(x)
+print(15%5)
+
+# %%
+x = np.array([2,3])
+integration_time = 100
+dt = 0.02
+lin_func(0, x)
+for i in range(1,10):
+    print(local_FTLE(lin_func, x, i*integration_time, dt, der))
+    
 
 # %%
 import time
@@ -277,7 +254,7 @@ import time
 # sanity check:
 l = local_FTLE(anode, np.array([0.1,-0.5]), 1, 0.1)
 
-x_amount = 150
+x_amount = 5
 integration_time = T
 dt = 0.1
 
@@ -303,7 +280,7 @@ lyap = np.reshape(lyap, (x_amount,x_amount))
 # Create heatmap using imshow
 from IPython.display import Image
 
-file_name = 'MLE_analytic_speedup.png'
+file_name = 'MLE_analytic_3.png'
 
 anodeimg = plt.imshow(np.rot90(lyap), origin='upper', extent=(-2, 2, -2, 2), cmap='viridis')
 vmin, vmax = anodeimg.get_clim()
@@ -312,16 +289,6 @@ plt.savefig(file_name, bbox_inches='tight', dpi=300, format='png', facecolor = '
 plt.close()
 
 img1 = Image(file_name, width = 400)
-display(img1)
-
-# %%
-from plots.plots import classification_levelsets
-
-classification_levelsets(anode, 'classification_levelsets')
-
-from IPython.display import Image
-
-img1 = Image(filename = 'classification_levelsets' + '.png', width = 400)
 display(img1)
 
 # %%
@@ -476,7 +443,7 @@ def linlayer_levelsets(model, fig_name=None, footnote=None, contour = True, plot
         plt.clf()
         plt.close()
     # else: plt.show()
-        
+
 
 # %%
 linlayer_levelsets(anode)
