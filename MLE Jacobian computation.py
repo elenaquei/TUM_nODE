@@ -169,7 +169,7 @@ def linear_dynamics(node, derivative):
         
         def f_x_t(x):
             return f_x(t, x)
-        Df_x = derivative(f_x_t, x_torch)
+        Df_x = derivative(t, x_torch)
         if isnode: 
             Df_x = Df_x.numpy()
         Dfx_Y = np.matmul(Df_x, Y).flatten()
@@ -183,40 +183,65 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
     '''
     Full Maximal Lyapunov exponent computation, based on the lynear_dynamics function
     '''
-    # time_array = np.arange(0, integration_time, dt)
+    def numpy_rhs_from_node(t,x):
+        x_torch = torch.from_numpy(x).type(torch.float32)
+        x_torch.requires_grad=True
+        f_x_torch = node.flow.dynamics.forward(t, x_torch)
+        f_x_torch = f_x_torch.detach().numpy()
+    
+    if isinstance(node, NeuralODE):
+        func = numpy_rhs_from_node
+        der = torch.autograd.functional.jacobian
+    else:
+        func = node
+    
+    # start with evolving x forward for "a bit"
+    print(func, x)
+    x_t = scipy.integrate.odeint(func, x, [0, integration_time])
+    x = x_t[-1]
+    
+    # set up of initial values
     Jac = np.identity(x.size)
     x_and_Jac_t = np.concatenate((x,Jac.flatten()))
+    L = np.zeros(x.size)
+
+    # first flow forward
+    x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, der), x_and_Jac_t, [0, integration_time])
+    Jac_t = select_Jac_int(x_and_Jac_t)
+    Q_t, R_t = np.linalg.qr(Jac_t)
+    x_and_Jac_t = np.concatenate((select_x_int(x_and_Jac_t),Q_t.flatten()))
+
+    #selection functionalities
     select_Jac_int = lambda mat: np.reshape(mat[-1,x.size:],[x.size,x.size])
     select_x_int = lambda mat: mat[-1,:x.size]
-    L = np.zeros(x.size)
+
+    # set up of time values 
     start_time = 0
-    length_iter = dt * 15
-    n_start_iter = 10
-    iters = np.floor(integration_time/length_iter).astype(int)
-    n_used_iter = iters - n_start_iter
-    used_time = n_used_iter * length_iter
+    length_iter = integration_time#dt * 15
+    iters = 1 #np.floor(integration_time/length_iter).astype(int) # number of iterations done
+    n_start_iter = 0# iters - 2# np.floor(iters/20) # 20% of the integration time used to get in position
+    used_time = (iters - n_start_iter) * length_iter
     for i in range(iters):
         time_array_iter = start_time + np.arange(0, length_iter, dt)
         start_time = time_array_iter[-1]
-        #print(time_array_iter)
-        if isinstance(node, NeuralODE):
-            # print('is node')
-            x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, torch.autograd.functional.jacobian), x_and_Jac_t, time_array_iter)
-        else:
-            # print('is not node')
-            x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, der), x_and_Jac_t, time_array_iter)
+        x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, der), x_and_Jac_t, time_array_iter)
         
         Jac_t = select_Jac_int(x_and_Jac_t)
         Q_t, R_t = np.linalg.qr(Jac_t)
-        if i > n_start_iter:
+        x_and_Jac_t = np.concatenate((select_x_int(x_and_Jac_t),Q_t.flatten())) # for numerical stability
+
+        # if the system has stabilised, the lyapunov computation takes place
+        if i >= n_start_iter:
             if any(np.diagonal(R_t)<0):
-                R_t = - R_t
-                Q_t = -Q_t
-                if any(np.diagonal(R_t)<0):
+                if any(np.diagonal(R_t)>0):
                     print('R_t has both negative and positive values on the diagonal')
-                    print(R_t, Q_t, flush = True)
+                    print(np.diagonal(R_t), flush = True)
+                    print('with eigenvalues:', np.linalg.eig(Jac_t).eigenvalues)
+                    return np.nan
+                R_t = - R_t
+                Q_t = - Q_t
             L += np.log(np.diagonal(R_t)) # the QR decomposition seems to, at times, give negative Rs, why??
-        x_and_Jac_t = np.concatenate((select_x_int(x_and_Jac_t),Q_t.flatten()))
+        
     #print(R_t, L)
     return (L/used_time)
 
@@ -234,19 +259,95 @@ def linear_function(x):
         return A
     return func, derivative
 
-
-# %%
 lin_func, der = linear_function(x)
 print(15%5)
 
-# %%
 x = np.array([2,3])
 integration_time = 100
 dt = 0.02
 lin_func(0, x)
 for i in range(1,10):
     print(local_FTLE(lin_func, x, i*integration_time, dt, der))
-    
+# for linear functions, the computed FTLE seems correct up to numerical error, but the error is always noticeable, even if not big
+
+# %%
+## a little harder test case
+def lorenz():
+    sigma = 10
+    beta = 8/3
+    rho = 28
+    def func(x_func, t):
+        #print(t)
+        x = x_func[0]
+        y = x_func[1]
+        z = x_func[2]
+        lor = np.array([sigma*(y-x), x*(rho - z)-y, x*y - beta*z])
+        return lor
+    def derivative(x_func, t):
+        x = x_func[0]
+        y = x_func[1]
+        z = x_func[2]
+        return np.array([[-sigma, sigma, 0],[rho-z, -1, -x],[y, x, -beta]])
+    return func, derivative
+
+
+# %%
+lor_func, lor_der = lorenz()
+print(lor_func([1,2,3], 0))
+print(lor_der([1,2,3], 0))
+
+
+# %%
+def simple_lyap(f, dxf, x, t = 100):
+    x_t = scipy.integrate.odeint(f, x, np.arange(0, t, 0.01))
+    # ax = plt.figure().add_subplot(projection='3d')
+    # ax.plot(x_t[-10000:,0], x_t[-10000:,1], x_t[-10000:,2])
+    # plt.show()
+    x = x_t[-1]
+    x_and_Jac = np.concatenate((x, np.eye(x.size).flatten()))
+    f_and_dxf = lambda x,t: np.concatenate((f(x,t), dxf(x,t).flatten()))
+    x_and_Jac_t = scipy.integrate.odeint(f_and_dxf, x_and_Jac, np.arange(t, 2*t, 0.01))
+    x_t = x_and_Jac_t[-10000:,:3]
+    # ax = plt.figure().add_subplot(projection='3d')
+    # ax.plot(x_t[:,0], x_t[:,1], x_t[:,2])
+    # plt.show()
+    Jac_final = np.reshape(x_and_Jac_t[-1,x.size:],[x.size, x.size])
+    Lyap_mat = 1/(2*t) * np.matmul(Jac_final.transpose(), Jac_final)
+    lyap_exp = np.log(np.linalg.eig(Lyap_mat).eigenvalues)
+    return lyap_exp
+
+
+def stable_lyap(f, dxf, x, t = 100):
+    # set up x
+    x_t = scipy.integrate.odeint(f, x, np.arange(0, t, 0.01))
+    x = x_t[-1]
+    # some defs
+    x_and_Jac = np.concatenate((x, np.eye(x.size).flatten()))
+    f_and_dxf = lambda x,t: np.concatenate((f(x,t), dxf(x,t).flatten()))
+    lyap = np.zeros(x.size)
+    for i in range(10):
+        x_and_Jac_t = scipy.integrate.odeint(f_and_dxf, x_and_Jac, np.arange(t+i*t/10, t + (i+1)*t/10, 0.01))
+        Jac_iter = np.reshape(x_and_Jac_t[-1,x.size:],[x.size, x.size])
+        Q_t, R_t = np.linalg.qr(Jac_iter)
+        x_and_Jac = np.concatenate((x_and_Jac_t[-1,:x.size], Q_t.flatten()))
+        if i > 3:
+            lyap = lyap + np.log(np.max(R_t.diagonal()))
+    return lyap/(0.7*t)
+
+
+# scipy.integrate.odeint(lor_func, np.array([1,2,3]), np.array([0, 1]))
+print(simple_lyap(lor_func, lor_der, np.array([1,2,3]), 100))
+print(stable_lyap(lor_func, lor_der, np.array([1,2,3]), 300))
+
+# %%
+Q, R = np.linalg.qr([[1,2,3],[7,6,5],[10,11,12]])
+print(Q,'\n', R,'\n', np.matmul(Q,R))
+
+# %%
+x = np.array([1,2,3])
+integration_time = 100
+dt = 0.02
+print(local_FTLE(lor_func, x, integration_time, dt, lor_der))
 
 # %%
 import time
