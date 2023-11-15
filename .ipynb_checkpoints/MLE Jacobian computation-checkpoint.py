@@ -133,14 +133,11 @@ print(trajectories.size()) #time is in the first coordinate
 # %%
 '''
 In this section, the set of function definitions needed to compute the Maximal Lyapunov Exponent by direct integration
-(i.e. the analytical way) are coded.
+(i.e. the nalaytical way) are coded.
 '''
 
 import numpy as np
 import scipy
-import torch
-from models.neural_odes import NeuralODE
-
 
 def linear_dynamics(node, derivative):
     '''
@@ -161,23 +158,21 @@ def linear_dynamics(node, derivative):
         size_x = int((-1 + np.sqrt(1 + 4 * x_and_Y.size))/2)
         x = x_and_Y[:size_x]
         Y = np.reshape(x_and_Y[size_x:], [size_x, size_x])
-        # print('Y = ', Y)
         if isnode:
             x_torch = torch.from_numpy(x).type(torch.float32)
             x_torch.requires_grad=True
         else:
             x_torch = x
-        f_x_torch = f_x(x_torch, t)
+        f_x_torch = f_x(t, x_torch)
         if isnode:
             f_x_torch = f_x_torch.detach().numpy()
         
-        Df_x = derivative(x_torch, t)
-        
+        def f_x_t(x):
+            return f_x(t, x)
+        Df_x = derivative(f_x_t, x_torch)
         if isnode: 
             Df_x = Df_x.numpy()
-        
         Dfx_Y = np.matmul(Df_x, Y).flatten()
-        
         rhs = np.concatenate((f_x_torch, Dfx_Y))
         return rhs
     
@@ -188,61 +183,44 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
     '''
     Full Maximal Lyapunov exponent computation, based on the lynear_dynamics function
     '''
-    def numpy_rhs_from_node(x, t):
-        x_torch = torch.from_numpy(x).type(torch.float32)
-        x_torch.requires_grad=True
-        f_x_torch = node.flow.dynamics.forward(t, x_torch)
-        f_x_torch = f_x_torch.detach().numpy()
-        return f_x_torch
-    
-    if isinstance(node, NeuralODE):
-        func = numpy_rhs_from_node
-        der = torch.autograd.functional.jacobian
-    else:
-        func = node
-    
-    # start with evolving x forward for "a bit"
-    # print(func, x)
-    x_t = scipy.integrate.odeint(func, x, [0, integration_time])
-    x = x_t[-1]
-    
-    # set up of initial values
+    # time_array = np.arange(0, integration_time, dt)
     Jac = np.identity(x.size)
     x_and_Jac_t = np.concatenate((x,Jac.flatten()))
-    L = np.zeros(x.size)
-    
-    #selection functionalities
     select_Jac_int = lambda mat: np.reshape(mat[-1,x.size:],[x.size,x.size])
     select_x_int = lambda mat: mat[-1,:x.size]
-    
-    # first flow forward
-    #x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, der), x_and_Jac_t, [0, integration_time])
-    #Jac_t = select_Jac_int(x_and_Jac_t)
-    #Q_t, R_t = np.linalg.qr(Jac_t)
-    #x_and_Jac_t = np.concatenate((select_x_int(x_and_Jac_t),Q_t.flatten()))
-    
-    # set up of time values 
+    L = np.zeros(x.size)
     start_time = 0
-    
-    iters = 20  # number of iterations done
-    n_start_iter = 10 # number of integration time used to get in position
-    length_iter = integration_time/iters # length of each iteration
-    used_time = (iters - n_start_iter) * length_iter
-    
+    length_iter = dt * 15
+    n_start_iter = 10
+    iters = np.floor(integration_time/length_iter).astype(int)
+    n_start_iter =  np.floor(iters/10)
+    n_used_iter = iters - n_start_iter
+    used_time = n_used_iter * length_iter
     for i in range(iters):
         time_array_iter = start_time + np.arange(0, length_iter, dt)
         start_time = time_array_iter[-1]
-        x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, der), x_and_Jac_t, time_array_iter)
+        #print(time_array_iter)
+        if isinstance(node, NeuralODE):
+            # print('is node')
+            x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, torch.autograd.functional.jacobian), x_and_Jac_t, time_array_iter)
+        else:
+            # print('is not node')
+            x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, der), x_and_Jac_t, time_array_iter)
         
         Jac_t = select_Jac_int(x_and_Jac_t)
         Q_t, R_t = np.linalg.qr(Jac_t)
-        x_and_Jac_t = np.concatenate((select_x_int(x_and_Jac_t),Q_t.flatten())) # for numerical stability
-
-        # if the system has stabilised, the lyapunov computation takes place
-        if i >= n_start_iter:
-            L += np.log(np.abs((np.diagonal(R_t)))) # the QR decomposition seems to, at times, give negative Rs, why??
-        
-    return (L)/length_iter/(iters-n_start_iter)
+        if i > n_start_iter:
+            if any(np.diagonal(R_t)<0):
+                R_t = - R_t
+                Q_t = -Q_t
+                if any(np.diagonal(R_t)<0):
+                    print('R_t has both negative and positive values on the diagonal')
+                    print(R_t, Q_t, flush = True)
+                    print('time = ', time_array_iter[-1])
+            L += np.log(np.diagonal(R_t)) # the QR decomposition seems to, at times, give negative Rs, why??
+        x_and_Jac_t = np.concatenate((select_x_int(x_and_Jac_t),Q_t.flatten()))
+    #print(R_t, L)
+    return (L/used_time)
 
 
 
@@ -250,72 +228,38 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
 ## easier test case
 def linear_function(x):
     # A = np.random.rand(x.size,x.size)
-    A = np.array([[-1,-2],[3,-1]])
+    A = np.array([[-1,-1],[1,0]])
     print('Eigenvalues = ', np.linalg.eig(A).eigenvalues)
-    def func(x_func, t):
-        # print('t =',t, ', x = ', x_func)
+    def func(t, x_func):
         return np.matmul(A,x_func)
-    def derivative(x_func, t):
+    def derivative(t, x_func):
         return A
     return func, derivative
-    
-x = np.array([2,3])
+
 lin_func, der = linear_function(x)
-scipy.integrate.odeint(lin_func, x, np.arange(0, 1,0.1))
+print(15%5)
 
-integration_time = 30
+x = np.array([2,3])
+integration_time = 100
 dt = 0.02
-lin_func(x, 0)
-print('local FTLE', local_FTLE(lin_func, x, integration_time, dt, der))
-A = np.array([[-1,-2],[3,-1]])
-# formal definition of the Lyapunov exponent
-np.linalg.eig(scipy.linalg.logm(np.matmul(scipy.linalg.expm(A * integration_time).transpose(), scipy.linalg.expm(A * integration_time)))/(2*integration_time)).eigenvalues
-
+lin_func(0, x)
+for i in range(1,10):
+    print(local_FTLE(lin_func, x, i*integration_time, dt, der))
+# for linear functions, the computed FTLE seems correct up to numerical error, but the error is always noticeable, even if not big
 
 # %%
-def linODE(A):
-    print('Eigenvalues = ', np.linalg.eig(A).eigenvalues)
-    def func(y, t):
-        Y = np.reshape(y,[2,2])
-        return np.matmul(A,Y).flatten()
-    return func
-
-A = np.array([[-1,-1],[1,0]])
-funcA = linODE(A)
-y = scipy.integrate.odeint(funcA, [1,0,0,1], [0,10])
-Y = np.reshape(y[-1,:],[2,2])
-print(Y)
-print(scipy.linalg.expm(A * 10))
-
-# %%
-# understanding Lyapunov a bit better: the matrix case 
-# consider the ODE xdot = A x
-# then Y dot = A Y 
-integration_time = 20
-A = np.array([[-1,-1],[1,0]])
-Y = scipy.linalg.expm(A * integration_time)
-print('Y =', Y)
-Q, R = np.linalg.qr(Y)
-print(np.linalg.eig(scipy.linalg.logm(np.matmul(Y.transpose(),Y))/(2*integration_time)).eigenvalues)
-print(np.linalg.eig(A).eigenvalues)
-print('R =', R)
-print(np.log(np.abs((np.diagonal(R))))/integration_time)
-
-
-# %%
-## a little harder test case : the Lorentz system
+## a little harder test case
 def lorenz():
     sigma = 10
     beta = 8/3
     rho = 28
-    def func(x_func, t):
-        #print(t)
+    def func(t, x_func):
         x = x_func[0]
         y = x_func[1]
         z = x_func[2]
         lor = np.array([sigma*(y-x), x*(rho - z)-y, x*y - beta*z])
         return lor
-    def derivative(x_func, t):
+    def derivative(t, x_func):
         x = x_func[0]
         y = x_func[1]
         z = x_func[2]
@@ -324,150 +268,17 @@ def lorenz():
 
 
 # %%
-## a little harder test case: the Roessler attractor
-def rossler():
-    a = 0.1
-    b = 0.1
-    c = 14
-    def func(x_func, t):
-        #print(t)
-        x = x_func[0]
-        y = x_func[1]
-        z = x_func[2]
-        ross = np.array([-y-z, x+a*y, b+z*(x-c)])
-        return ross
-    def derivative(x_func, t):
-        x = x_func[0]
-        y = x_func[1]
-        z = x_func[2]
-        return np.array([[0, -1, -1],[1, a, 0],[z, 0, x-c]])
-    return func, derivative
-
-
-# %%
-## the simplest excample: 1D linear 
-def linear1D():
-    def func(x_func, t):
-        #print(t)
-        return x_func
-    def derivative(x_func, t):
-        return np.array([[1.0]])
-    return func, derivative
-
-
-# %%
-import numpy as np
-import scipy
-
-
-def simple_lyap(f, dxf, x, t = 100, bool_plots = False):
-    size = x.size
-    x_t = scipy.integrate.odeint(f, x, np.arange(0, t, 0.01))
-    if bool_plots:
-        ax = plt.figure().add_subplot(projection='3d')
-        ax.plot(x_t[-10000:,0], x_t[-10000:,1], x_t[-10000:,2])
-        plt.show()
-    x = x_t[-1]
-    x_and_Jac = np.concatenate((x, np.eye(x.size).flatten()))
-    extract_x = lambda x_and_Jac: x_and_Jac[:size]
-    extract_Jac = lambda x_and_Jac: np.reshape(x_and_Jac[size:], [size,size])
-    f_and_dxf = lambda x,t: np.concatenate((f(extract_x(x),t), np.matmul(dxf(extract_x(x),t), extract_Jac(x)).flatten())) # WRONG RIGHT HAND SIDE FOR Y
-    x_and_Jac_t = scipy.integrate.odeint(f_and_dxf, x_and_Jac, np.arange(t, 2*t, 0.01))
-    if bool_plots:
-        x_t = x_and_Jac_t[-10000:,:3]
-        ax = plt.figure().add_subplot(projection='3d')
-        ax.plot(x_t[:,0], x_t[:,1], x_t[:,2])
-        plt.show()
-    Jac_final = extract_Jac(x_and_Jac_t[-1,:])
-    Lyap_mat = np.matmul(Jac_final.transpose(), Jac_final)
-    lyap_exp = 1/(2*t) * np.log(np.linalg.eig(Lyap_mat).eigenvalues)
-    return lyap_exp
-
-
-def stable_lyap(f, dxf, x, t = 100):
-    # set up x
-    size = x.size
-    x_t = scipy.integrate.odeint(f, x, np.arange(0, t, 0.01))
-    x = x_t[-1]
-    # some defs
-    x_and_Jac = np.concatenate((x, np.eye(x.size).flatten()))
-    extract_x = lambda x_and_Jac: x_and_Jac[:size]
-    extract_Jac = lambda x_and_Jac: np.reshape(x_and_Jac[size:], [size,size])
-    f_and_dxf = lambda x,t: np.concatenate((f(extract_x(x),t), np.matmul(dxf(extract_x(x),t), extract_Jac(x)).flatten())) 
-    lyap = np.zeros(size)
-    n_iter = 20
-    start_iters = 10
-    counter = 0
-    for i in range(n_iter):
-        x_and_Jac_t = scipy.integrate.odeint(f_and_dxf, x_and_Jac, np.arange(t+i*t/n_iter, t + (i+1)*t/n_iter, 0.01))
-        Jac_iter = extract_Jac(x_and_Jac_t[-1,:])
-        Q_t, R_t = np.linalg.qr(Jac_iter)
-        x_and_Jac = np.concatenate((x_and_Jac_t[-1,:x.size], Q_t.flatten()))
-        if i > start_iters:
-            counter += 1
-            lyap = lyap + np.log((np.abs(R_t.diagonal())))/(t/n_iter)
-    return lyap/counter
-
-
-# scipy.integrate.odeint(lor_func, np.array([1,2,3]), np.array([0, 1]))
-
-print('\nResults for 1D linear')
-lin1D_func, lin1D_der = linear1D()
-print('Simple implementation \n', simple_lyap(lin1D_func, lin1D_der, np.array([1]), 6), 'VS 1') # works quite well!
-print('Stable implementation \n', stable_lyap(lin1D_func, lin1D_der, np.array([1]), 6), 'VS 1') # finally!
-print('Stable implementation \n', stable_lyap(lin1D_func, lin1D_der, np.array([1]), 60), 'VS 1\n\n') # it works! 
-
-test = True
-if test:
-    lor_func, lor_der = lorenz()
-    print('Results for Lorentz')
-    print('Simple implementation \n',simple_lyap(lor_func, lor_der, np.array([1,2,3]), 100), 'VS 0.90')
-    print('Stable implementation \n', stable_lyap(lor_func, lor_der, np.array([1,2,3]), 300), 'VS 0.90')
-    print('Refined implementation \n', local_FTLE(lor_func, np.array([1,2,3]), 100, 0.1, lor_der), 'VS 0.90')
-    
-    print('\nResults for Rossler')
-    ross_func, ross_der = rossler()
-    print('Simple implementation \n', simple_lyap(ross_func, ross_der, np.array([1,2,3]), 100), 'VS 0.0714, 0, -5.3943')
-    print('Stable implementation \n', stable_lyap(ross_func, ross_der, np.array([1,2,3]), 200), 'VS 0.0714, 0, -5.3943')
-    print('Stable implementation \n', stable_lyap(ross_func, ross_der, np.array([1,2,3]), 800), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation \n', local_FTLE(ross_func, np.array([1,2,3]), 100, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation \n', local_FTLE(ross_func, np.array([1,2,3]), 500, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation \n', local_FTLE(ross_func, np.array([1,2,3]), 1500, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
-
-
-# %%
-print('\nResults for 1D linear')
-lin1D_func, lin1D_der = linear1D()
-print('Stable implementation \n', stable_lyap(lin1D_func, lin1D_der, np.array([1]), 6), 'VS 1') # finally!
-print('Refined implementation 100\n', local_FTLE(lin1D_func, np.array([2]), 100, 0.1, lin1D_der), 'VS 1')
-
-test = True
-if test:
-    
-    print('\nResults for Lorentz')
-    lor_func, lor_der = lorenz()
-    print('Stable implementation \n', stable_lyap(lor_func, lor_der, np.array([1,2,3]), 300), 'VS 0.90')
-    print('Refined implementation \n', local_FTLE(lor_func, np.array([1,2,3]), 100, 0.1, lor_der), 'VS 0.90')
-    
-    print('\nResults for Rossler')
-    ross_func, ross_der = rossler()
-    print('Stable implementation \n', stable_lyap(ross_func, ross_der, np.array([1,2,3]), 800), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation 100\n', local_FTLE(ross_func, np.array([1,2,3]), 100, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation 500\n', local_FTLE(ross_func, np.array([1,2,3]), 500, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation 1500\n', local_FTLE(ross_func, np.array([1,2,3]), 1500, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
-
-# %%
-
-A_mat = np.array([[1,2,3],[7,6,5],[10,1,12]])
-Q, R = np.linalg.qr(A_mat)
-print('QR-A = ', np.matmul(Q,R)-A_mat)
-print(R.diagonal(), np.linalg.eig(A_mat).eigenvalues, np.prod(R.diagonal()), np.prod(np.linalg.eig(A_mat).eigenvalues))
+lor_func, der = lorenz()
+print(lor_func(0,[1,2,3]))
+print(der(0,[1,2,3]))
 
 # %%
 x = np.array([1,2,3])
 integration_time = 100
 dt = 0.02
-print(local_FTLE(lor_func, x, integration_time, dt, lor_der))
+for i in range(1,2):
+    print(local_FTLE(lor_func, x, i*integration_time, dt, der))
+    
 
 # %%
 import time
