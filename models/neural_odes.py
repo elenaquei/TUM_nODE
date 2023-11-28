@@ -7,6 +7,7 @@
 import torch
 import torch.nn as nn
 from torchdiffeq import odeint, odeint_adjoint
+from warnings import warn
 # from adjoint_neural_ode import adj_Dynamics
 
 #odeint Returns:
@@ -105,6 +106,9 @@ class Dynamics(nn.Module):
         """
         dt = self.T/self.time_steps   #here was no -1 before which does not fit with adjoint solver otherwise
         k = int(t/dt)
+        if k >self.T-1:
+            warn('Extending the dynamics')
+            k = self.T-1 # here, the dynamics is defined to "continue" with the latest values
         
         if self.architecture < 1:
             w_t = self.fc2_time[k].weight
