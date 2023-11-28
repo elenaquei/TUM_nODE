@@ -69,7 +69,7 @@ hidden_dim, data_dim = 2, 2
 augment_dim = 0
 
 #T is the end time of the neural ODE evolution, num_steps are the amount of discretization steps for the ODE solver
-T, num_steps = 20, 20
+T, num_steps = 20, 2000
 bound = 0.
 fp = False #this recent change made things not work anymore
 cross_entropy = False
@@ -91,12 +91,6 @@ torch.cuda.manual_seed(seed)
 anode = NeuralODE(device, data_dim, hidden_dim, augment_dim=augment_dim, non_linearity=non_linearity, 
                     architecture=architecture, T=T, time_steps=num_steps, fixed_projector=fp, cross_entropy=cross_entropy)
 optimizer_anode = torch.optim.Adam(anode.parameters(), lr=1e-3) 
-
-torch.manual_seed(seed)
-torch.cuda.manual_seed(seed)
-rnode = NeuralODE(device, data_dim, hidden_dim, augment_dim=0, non_linearity=non_linearity, 
-                    architecture=architecture, T=T, time_steps=num_steps, fixed_projector=fp, cross_entropy=cross_entropy)
-optimizer_rnode = torch.optim.Adam(rnode.parameters(), lr=1e-3) 
 
 # %%
 from models.training import doublebackTrainer
@@ -167,9 +161,11 @@ def linear_dynamics(node, derivative):
             x_torch.requires_grad=True
         else:
             x_torch = x
-        f_x_torch = f_x(x_torch, t)
         if isnode:
+            f_x_torch = f_x(t, x_torch)
             f_x_torch = f_x_torch.detach().numpy()
+        else:
+            f_x_torch = f_x(x_torch, t)
         
         Df_x = derivative(x_torch, t)
         
@@ -188,29 +184,38 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
     '''
     Full Maximal Lyapunov exponent computation, based on the lynear_dynamics function
     '''
-    def numpy_rhs_from_node(x, t):
-        x_torch = torch.from_numpy(x).type(torch.float32)
-        x_torch.requires_grad=True
-        f_x_torch = node.flow.dynamics.forward(t, x_torch)
-        f_x_torch = f_x_torch.detach().numpy()
-        return f_x_torch
+    def numpy_rhs_from_node():
+        def func(x,t):
+            x_torch = torch.from_numpy(x).type(torch.float32)
+            x_torch.requires_grad=True
+            f_x_torch = node.flow.dynamics.forward(t, x_torch)
+            f_x_torch = f_x_torch.detach().numpy()
+            return f_x_torch
+        def der(x,t):
+            x_torch = torch.from_numpy(x).type(torch.float32)
+            x_torch.requires_grad=True
+            f_x_t = lambda x: node.flow.dynamics.forward(t, x)
+            Df_x = torch.autograd.functional.jacobian(f_x_t, x_torch) # symbolical (I think)
+            Dfx = Df_x.numpy()
+            return Dfx
+        return func, der
     
     if isinstance(node, NeuralODE):
-        func = numpy_rhs_from_node
-        der = torch.autograd.functional.jacobian
+        func, der = numpy_rhs_from_node()
+        #der = torch.autograd.functional.jacobian
     else:
         func = node
     
     # start with evolving x forward for "a bit"
-    # print(func, x)
-    x_t = scipy.integrate.odeint(func, x, [0, integration_time])
-    x = x_t[-1]
+    # theory, but not in our case! 
+    # x_t = scipy.integrate.odeint(func, x, [0, integration_time])
+    # x = x_t[-1]
     
     # set up of initial values
     Jac = np.identity(x.size)
     x_and_Jac_t = np.concatenate((x,Jac.flatten()))
     L = np.zeros(x.size)
-    
+
     #selection functionalities
     select_Jac_int = lambda mat: np.reshape(mat[-1,x.size:],[x.size,x.size])
     select_x_int = lambda mat: mat[-1,:x.size]
@@ -225,16 +230,17 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
     start_time = 0
     
     iters = 20  # number of iterations done
-    n_start_iter = 10 # number of integration time used to get in position
+    n_start_iter = 0 # number of integration time used to get in position
     length_iter = integration_time/iters # length of each iteration
     used_time = (iters - n_start_iter) * length_iter
     
     for i in range(iters):
-        time_array_iter = start_time + np.arange(0, length_iter, dt)
+        time_array_iter = start_time + np.array([0, length_iter])
         start_time = time_array_iter[-1]
-        x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, der), x_and_Jac_t, time_array_iter)
+        x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(func, der), x_and_Jac_t, time_array_iter)
         
         Jac_t = select_Jac_int(x_and_Jac_t)
+        
         Q_t, R_t = np.linalg.qr(Jac_t)
         x_and_Jac_t = np.concatenate((select_x_int(x_and_Jac_t),Q_t.flatten())) # for numerical stability
 
@@ -247,59 +253,71 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
 
 
 # %%
-## easier test case
-def linear_function(x):
-    # A = np.random.rand(x.size,x.size)
-    A = np.array([[-1,-2],[3,-1]])
-    print('Eigenvalues = ', np.linalg.eig(A).eigenvalues)
+import time
+
+# testing ODE with different MLE in phase space
+def multiple_exponents_ODE2D():
+    def func(x, t):
+        if t<1/2 and np.linalg.norm(x-np.array([1,1]))<1/2:
+            return -x
+        else:
+            return 2*x
+    def der(x,t):
+        if t<1/2 and np.linalg.norm(x-np.array([1,1]))<1/2:
+            return -np.eye(2)
+        else:
+            return 2*np.eye(2)
+    return func, der
+
+
+func, der = multiple_exponents_ODE2D()
+
+x_amount = 5
+integration_time = T 
+dt = 0.1
+
+x = np.linspace(-2,2,x_amount)
+y = np.linspace(-2,2,x_amount)
+X, Y = np.meshgrid(x, y)
+XY = np.array([X.flatten(), Y.flatten()])
+
+lyap_small_exp = np.zeros(x_amount**2)
+start_time = time.time()
+for i in range(x_amount**2):
+    lyap_small_exp[i] = np.max(local_FTLE(func, XY[:,i], 1, 0.1, der))
+    iteration_time = time.time() - start_time
+    if np.mod(i, 10) == 0:
+        print(i+1,' out of ', x_amount**2, ' after ', iteration_time)
+    # print(lyap[i])
+    #break
+lyap_small_exp = np.reshape(lyap_small_exp, (x_amount,x_amount))
+print(lyap_small_exp)
+
+# Create heatmap using imshow
+from IPython.display import Image
+
+file_name = 'MLE_analytic_2DExp.png'
+
+anodeimg = plt.imshow(np.rot90(lyap_small_exp), origin='upper', extent=(-2, 2, -2, 2), cmap='viridis')
+vmin, vmax = anodeimg.get_clim()
+plt.colorbar()  # Show color scale
+plt.savefig(file_name, bbox_inches='tight', dpi=300, format='png', facecolor = 'white')
+plt.close()
+
+img1 = Image(file_name, width = 400)
+display(img1)
+
+
+# %%
+## the simplest example: 1D linear 
+
+def linear1D():
     def func(x_func, t):
-        # print('t =',t, ', x = ', x_func)
-        return np.matmul(A,x_func)
+        #print(t)
+        return x_func
     def derivative(x_func, t):
-        return A
+        return np.array([[1.0]])
     return func, derivative
-    
-x = np.array([2,3])
-lin_func, der = linear_function(x)
-scipy.integrate.odeint(lin_func, x, np.arange(0, 1,0.1))
-
-integration_time = 30
-dt = 0.02
-lin_func(x, 0)
-print('local FTLE', local_FTLE(lin_func, x, integration_time, dt, der))
-A = np.array([[-1,-2],[3,-1]])
-# formal definition of the Lyapunov exponent
-np.linalg.eig(scipy.linalg.logm(np.matmul(scipy.linalg.expm(A * integration_time).transpose(), scipy.linalg.expm(A * integration_time)))/(2*integration_time)).eigenvalues
-
-
-# %%
-def linODE(A):
-    print('Eigenvalues = ', np.linalg.eig(A).eigenvalues)
-    def func(y, t):
-        Y = np.reshape(y,[2,2])
-        return np.matmul(A,Y).flatten()
-    return func
-
-A = np.array([[-1,-1],[1,0]])
-funcA = linODE(A)
-y = scipy.integrate.odeint(funcA, [1,0,0,1], [0,10])
-Y = np.reshape(y[-1,:],[2,2])
-print(Y)
-print(scipy.linalg.expm(A * 10))
-
-# %%
-# understanding Lyapunov a bit better: the matrix case 
-# consider the ODE xdot = A x
-# then Y dot = A Y 
-integration_time = 20
-A = np.array([[-1,-1],[1,0]])
-Y = scipy.linalg.expm(A * integration_time)
-print('Y =', Y)
-Q, R = np.linalg.qr(Y)
-print(np.linalg.eig(scipy.linalg.logm(np.matmul(Y.transpose(),Y))/(2*integration_time)).eigenvalues)
-print(np.linalg.eig(A).eigenvalues)
-print('R =', R)
-print(np.log(np.abs((np.diagonal(R))))/integration_time)
 
 
 # %%
@@ -345,138 +363,35 @@ def rossler():
 
 
 # %%
-## the simplest excample: 1D linear 
-def linear1D():
-    def func(x_func, t):
-        #print(t)
-        return x_func
-    def derivative(x_func, t):
-        return np.array([[1.0]])
-    return func, derivative
-
-
-# %%
 import numpy as np
 import scipy
 
-
-def simple_lyap(f, dxf, x, t = 100, bool_plots = False):
-    size = x.size
-    x_t = scipy.integrate.odeint(f, x, np.arange(0, t, 0.01))
-    if bool_plots:
-        ax = plt.figure().add_subplot(projection='3d')
-        ax.plot(x_t[-10000:,0], x_t[-10000:,1], x_t[-10000:,2])
-        plt.show()
-    x = x_t[-1]
-    x_and_Jac = np.concatenate((x, np.eye(x.size).flatten()))
-    extract_x = lambda x_and_Jac: x_and_Jac[:size]
-    extract_Jac = lambda x_and_Jac: np.reshape(x_and_Jac[size:], [size,size])
-    f_and_dxf = lambda x,t: np.concatenate((f(extract_x(x),t), np.matmul(dxf(extract_x(x),t), extract_Jac(x)).flatten())) # WRONG RIGHT HAND SIDE FOR Y
-    x_and_Jac_t = scipy.integrate.odeint(f_and_dxf, x_and_Jac, np.arange(t, 2*t, 0.01))
-    if bool_plots:
-        x_t = x_and_Jac_t[-10000:,:3]
-        ax = plt.figure().add_subplot(projection='3d')
-        ax.plot(x_t[:,0], x_t[:,1], x_t[:,2])
-        plt.show()
-    Jac_final = extract_Jac(x_and_Jac_t[-1,:])
-    Lyap_mat = np.matmul(Jac_final.transpose(), Jac_final)
-    lyap_exp = 1/(2*t) * np.log(np.linalg.eig(Lyap_mat).eigenvalues)
-    return lyap_exp
-
-
-def stable_lyap(f, dxf, x, t = 100):
-    # set up x
-    size = x.size
-    x_t = scipy.integrate.odeint(f, x, np.arange(0, t, 0.01))
-    x = x_t[-1]
-    # some defs
-    x_and_Jac = np.concatenate((x, np.eye(x.size).flatten()))
-    extract_x = lambda x_and_Jac: x_and_Jac[:size]
-    extract_Jac = lambda x_and_Jac: np.reshape(x_and_Jac[size:], [size,size])
-    f_and_dxf = lambda x,t: np.concatenate((f(extract_x(x),t), np.matmul(dxf(extract_x(x),t), extract_Jac(x)).flatten())) 
-    lyap = np.zeros(size)
-    n_iter = 20
-    start_iters = 10
-    counter = 0
-    for i in range(n_iter):
-        x_and_Jac_t = scipy.integrate.odeint(f_and_dxf, x_and_Jac, np.arange(t+i*t/n_iter, t + (i+1)*t/n_iter, 0.01))
-        Jac_iter = extract_Jac(x_and_Jac_t[-1,:])
-        Q_t, R_t = np.linalg.qr(Jac_iter)
-        x_and_Jac = np.concatenate((x_and_Jac_t[-1,:x.size], Q_t.flatten()))
-        if i > start_iters:
-            counter += 1
-            lyap = lyap + np.log((np.abs(R_t.diagonal())))/(t/n_iter)
-    return lyap/counter
-
-
-# scipy.integrate.odeint(lor_func, np.array([1,2,3]), np.array([0, 1]))
-
 print('\nResults for 1D linear')
 lin1D_func, lin1D_der = linear1D()
-print('Simple implementation \n', simple_lyap(lin1D_func, lin1D_der, np.array([1]), 6), 'VS 1') # works quite well!
-print('Stable implementation \n', stable_lyap(lin1D_func, lin1D_der, np.array([1]), 6), 'VS 1') # finally!
-print('Stable implementation \n', stable_lyap(lin1D_func, lin1D_der, np.array([1]), 60), 'VS 1\n\n') # it works! 
+print('Refined implementation \n', local_FTLE(lin1D_func, np.array([1]), 60, 0.1, lin1D_der), 'VS 1\n\n') 
 
 test = True
 if test:
     lor_func, lor_der = lorenz()
     print('Results for Lorentz')
-    print('Simple implementation \n',simple_lyap(lor_func, lor_der, np.array([1,2,3]), 100), 'VS 0.90')
-    print('Stable implementation \n', stable_lyap(lor_func, lor_der, np.array([1,2,3]), 300), 'VS 0.90')
     print('Refined implementation \n', local_FTLE(lor_func, np.array([1,2,3]), 100, 0.1, lor_der), 'VS 0.90')
     
-    print('\nResults for Rossler')
+    print('\nResults for Rossler show convergence over time')
     ross_func, ross_der = rossler()
-    print('Simple implementation \n', simple_lyap(ross_func, ross_der, np.array([1,2,3]), 100), 'VS 0.0714, 0, -5.3943')
-    print('Stable implementation \n', stable_lyap(ross_func, ross_der, np.array([1,2,3]), 200), 'VS 0.0714, 0, -5.3943')
-    print('Stable implementation \n', stable_lyap(ross_func, ross_der, np.array([1,2,3]), 800), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation \n', local_FTLE(ross_func, np.array([1,2,3]), 100, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation \n', local_FTLE(ross_func, np.array([1,2,3]), 500, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation \n', local_FTLE(ross_func, np.array([1,2,3]), 1500, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
+    print('Refined implementation t=100\n', local_FTLE(ross_func, np.array([1,2,3]), 100, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
+    print('Refined implementation t=500\n', local_FTLE(ross_func, np.array([1,2,3]), 500, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
+    print('Refined implementation t=1500\n', local_FTLE(ross_func, np.array([1,2,3]), 1500, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
 
-
-# %%
-print('\nResults for 1D linear')
-lin1D_func, lin1D_der = linear1D()
-print('Stable implementation \n', stable_lyap(lin1D_func, lin1D_der, np.array([1]), 6), 'VS 1') # finally!
-print('Refined implementation 100\n', local_FTLE(lin1D_func, np.array([2]), 100, 0.1, lin1D_der), 'VS 1')
-
-test = True
-if test:
-    
-    print('\nResults for Lorentz')
-    lor_func, lor_der = lorenz()
-    print('Stable implementation \n', stable_lyap(lor_func, lor_der, np.array([1,2,3]), 300), 'VS 0.90')
-    print('Refined implementation \n', local_FTLE(lor_func, np.array([1,2,3]), 100, 0.1, lor_der), 'VS 0.90')
-    
-    print('\nResults for Rossler')
-    ross_func, ross_der = rossler()
-    print('Stable implementation \n', stable_lyap(ross_func, ross_der, np.array([1,2,3]), 800), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation 100\n', local_FTLE(ross_func, np.array([1,2,3]), 100, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation 500\n', local_FTLE(ross_func, np.array([1,2,3]), 500, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
-    print('Refined implementation 1500\n', local_FTLE(ross_func, np.array([1,2,3]), 1500, 0.1, ross_der), 'VS 0.0714, 0, -5.3943')
-
-# %%
-
-A_mat = np.array([[1,2,3],[7,6,5],[10,1,12]])
-Q, R = np.linalg.qr(A_mat)
-print('QR-A = ', np.matmul(Q,R)-A_mat)
-print(R.diagonal(), np.linalg.eig(A_mat).eigenvalues, np.prod(R.diagonal()), np.prod(np.linalg.eig(A_mat).eigenvalues))
-
-# %%
-x = np.array([1,2,3])
-integration_time = 100
-dt = 0.02
-print(local_FTLE(lor_func, x, integration_time, dt, lor_der))
 
 # %%
 import time
 
 # sanity check:
-l = local_FTLE(anode, np.array([0.1,-0.5]), 1, 0.1)
+l = local_FTLE(anode, np.array([0.1,-0.5]), 19, 0.1)
+print(l)
 
-x_amount = 5
-integration_time = T
+x_amount = 100
+integration_time = T 
 dt = 0.1
 
 x = np.linspace(-2,2,x_amount)
@@ -484,26 +399,203 @@ y = np.linspace(-2,2,x_amount)
 X, Y = np.meshgrid(x, y)
 XY = np.array([X.flatten(), Y.flatten()])
 
-lyap = np.zeros(x_amount**2)
+lyap2 = np.zeros(x_amount**2)
 start_time = time.time()
 for i in range(x_amount**2):
-    # print(XY[:,i])
-    lyap[i] = np.max(local_FTLE(anode, XY[:,i], integration_time, dt))
+    lyap2[i] = np.max(local_FTLE(anode, XY[:,i], 20, 0.1))
     iteration_time = time.time() - start_time
     if np.mod(i, 10) == 0:
         print(i+1,' out of ', x_amount**2, ' after ', iteration_time)
-    #print(lyap[i])
+    # print(lyap[i])
     #break
-lyap = np.reshape(lyap, (x_amount,x_amount))
-# print(lyap)
+lyap2 = np.reshape(lyap2, (x_amount,x_amount))
+print(lyap2)
+
+# %%
+lyap2 = np.reshape(lyap2, (x_amount,x_amount))
+
 
 # %%
 # Create heatmap using imshow
 from IPython.display import Image
 
-file_name = 'MLE_analytic_3.png'
+file_name = 'MLE_analytic_7.png'
 
-anodeimg = plt.imshow(np.rot90(lyap), origin='upper', extent=(-2, 2, -2, 2), cmap='viridis')
+anodeimg = plt.imshow(np.rot90(lyap2), origin='upper', extent=(-2, 2, -2, 2), cmap='viridis')
+vmin, vmax = anodeimg.get_clim()
+plt.colorbar()  # Show color scale
+plt.savefig(file_name, bbox_inches='tight', dpi=300, format='png', facecolor = 'white')
+plt.close()
+
+img1 = Image(file_name, width = 400)
+display(img1)
+
+img1 = Image(filename = 'classification_levelsets' + '.png', width = 400)
+display(img1)
+
+
+# %%
+def func(x,t):
+    x_torch = torch.from_numpy(x).type(torch.float32)
+    x_torch.requires_grad=True
+    f_x_torch = anode.flow.dynamics.forward(t, x_torch)
+    f_x_torch = f_x_torch.detach().numpy()
+    return f_x_torch
+
+
+x = np.array([0.6, -0.4])
+
+print(local_FTLE(anode, x, 20, 0.1))
+
+x_torch = torch.from_numpy(x).type(torch.float32)
+
+trajectories = anode.flow.trajectory(x_torch, 5000).detach()
+x_t = scipy.integrate.odeint(func, x, np.linspace(0,20,500))
+
+#plt.plot(trajectories[:,0],trajectories[:,1])
+plt.plot(x_t[:,0],x_t[:,1])
+#plt.show()
+
+x = x - np.array([0.06, 0.02])
+x_torch = torch.from_numpy(x).type(torch.float32)
+
+#trajectories = anode.flow.trajectory(x_torch, 200).detach()
+
+#plt.plot(trajectories[:,0],trajectories[:,1])
+x_t = scipy.integrate.odeint(func, x, np.linspace(0,20,500))
+
+#plt.plot(trajectories[:,0],trajectories[:,1])
+plt.plot(x_t[:,0],x_t[:,1])
+
+plt.show()
+
+# %%
+with open('Lyap2_pic_data_for_RNN.npy', 'wb') as f:
+    np.save(f, lyap2)
+
+# %%
+with open('Lyap_pic_data_for_RNN.npy', 'rb') as f:
+    lyap_load = np.load(f)
+
+# Create heatmap using imshow
+from IPython.display import Image
+
+file_name = 'MLE_analytic_6.png'
+
+anodeimg = plt.imshow(np.rot90(lyap_load), origin='upper', extent=(-2, 2, -2, 2), cmap='viridis')
+vmin, vmax = anodeimg.get_clim()
+plt.colorbar()  # Show color scale
+plt.savefig(file_name, bbox_inches='tight', dpi=300, format='png', facecolor = 'white')
+plt.close()
+
+img1 = Image(file_name, width = 400)
+display(img1)
+
+# %%
+import time
+
+# testing ODE with different MLE in phase space
+def weirdODE1D():
+    def func(x, t):
+        if x<0:
+            return -x # contracting
+        else:
+            return x # expanding
+    def der(x,t):
+        if x<0:
+            return np.array([[-1]]) # contracting
+        else:
+            return np.array([[1]]) # expanding
+    return func, der
+
+
+def weirdODE2D():
+    def func(x, t):
+        return np.abs(x) # expanding
+    def der(x,t):
+        return np.diagflat(np.sign(x)) # expanding
+    return func, der
+
+
+
+weird1D_func, weird1D_der = weirdODE1D()
+local_FTLE(weird1D_func, np.array([1]), 60, 0.1, weird1D_der)
+
+x_amount = 10
+integration_time = T 
+dt = 0.1
+
+x = np.linspace(-2,2,x_amount)
+
+lyap_weird = np.zeros(x_amount)
+start_time = time.time()
+for i in range(x_amount):
+    lyap_weird[i] = np.max(local_FTLE(weird1D_func, x[i], 20, 0.1, weird1D_der))
+    iteration_time = time.time() - start_time
+    if np.mod(i, 10) == 0:
+        print(i+1,' out of ', x_amount, ' after ', iteration_time)
+
+print(lyap_weird)
+
+# %%
+# Create heatmap using imshow
+from IPython.display import Image
+
+file_name = 'weirdODE_MLE_5.png'
+
+anodeimg = plt.imshow(np.rot90(lyap_weird), origin='upper', extent=(-2, 2, -2, 2), cmap='viridis')
+vmin, vmax = anodeimg.get_clim()
+plt.colorbar()  # Show color scale
+plt.savefig(file_name, bbox_inches='tight', dpi=300, format='png', facecolor = 'white')
+plt.close()
+
+img1 = Image(file_name, width = 400)
+display(img1)
+
+# %%
+import time
+
+def weirdODE2D():
+    def func(x, t):
+        return np.abs(x) # expanding
+    def der(x,t):
+        return np.diagflat(np.sign(x)) # expanding
+    return func, der
+
+
+
+weird1D_func, weird1D_der = weirdODE2D()
+local_FTLE(weird1D_func, np.array([1]), 60, 0.1, weird1D_der)
+
+x_amount = 6
+integration_time = T 
+dt = 0.1
+
+x = np.linspace(-2,2,x_amount)
+y = np.linspace(-2,2,x_amount)
+X, Y = np.meshgrid(x, y)
+XY = np.array([X.flatten(), Y.flatten()])
+
+lyap_abs2D = np.zeros(x_amount**2)
+start_time = time.time()
+for i in range(x_amount**2):
+    lyap_abs2D[i] = np.max(local_FTLE(weird1D_func, XY[:,i], 20, 0.1,weird1D_der))
+    iteration_time = time.time() - start_time
+    if np.mod(i, 10) == 0:
+        print(i+1,' out of ', x_amount**2, ' after ', iteration_time)
+    # print(lyap[i])
+    #break
+lyap_abs2D = np.reshape(lyap_abs2D, (x_amount,x_amount))
+print(lyap_abs2D)
+
+
+# %%
+# Create heatmap using imshow
+from IPython.display import Image
+
+file_name = 'weirdODE2D_MLE_5.png'
+
+anodeimg = plt.imshow(np.rot90(lyap_abs2D), origin='upper', extent=(-2, 2, -2, 2), cmap='viridis')
 vmin, vmax = anodeimg.get_clim()
 plt.colorbar()  # Show color scale
 plt.savefig(file_name, bbox_inches='tight', dpi=300, format='png', facecolor = 'white')
@@ -839,8 +931,123 @@ trajectory_gif_new(anode, X_viz[0:batch_size], y_viz[0:batch_size], timesteps=nu
 trajectory_gif_new(rnode, X_viz[0:batch_size], y_viz[0:batch_size], timesteps=num_steps, filename = 'trajectory_db.gif', axlim = 8, dpi = 100)
 
 
-# %%
+# %% [markdown]
+# ### comparison with other Lyapunov computation
 
 # %%
+'''
+input: two trajectories x(t), y(t) where each has size (x_dim,len_t)
+output: maximum lyapunov exponent for each time t, size (1,len_t)'''
+def le(x,y,t):
+    d = x - y
+    d = torch.linalg.norm(x - y, dim = 0)
+    # print(f'{d.shape = }')
+    d = d/d[0]
+    d = np.log(d)
+    
+
+    d = d/t
+    return d
+
+
+
+'''
+Compute the maximum Lyapunov exponent with initial value tolerance eps
+input: 
+trajectories of size (x_amount,x_amount,x_dim,time_dim)
+each trajectory has initial value x_0 = traj[i,j,:,0]
+
+output:
+MLE for each trajectory as averaged LE for all initial values that is eps close to the initial value
+output size (x_amount,x_amount,t_dim)
+'''
+def MLE(traj, t, eps = 0.1):
+    x_amount = traj.size(0)
+    x_amount, y_amount, x_dim, t_dim = traj.shape
+    le_val = torch.zeros((x_amount, y_amount, t_dim)) 
+    print(f'{le_val.shape = }')
+    for i in range(x_amount):
+        for j in range(y_amount):
+            count = 0
+            for i_comp in range(x_amount):
+                for j_comp in range(y_amount):
+                    if (torch.norm(traj[i,j,:,0] - traj[i_comp,j_comp,:,0]) < eps and not(i == i_comp and j == j_comp)):
+                        count += 1
+                        le_val[i,j] += le(traj[i,j,:,:],traj[i_comp,j_comp,:,:],t)
+                        print('avg le update with count ',count,' and value ',le_val[i,j,-1])
+            if count > 1:
+                le_val[i,j,:] = le_val[i,j,:]/count
+    return le_val
+
+
+
+# %%
+
+x_amount = 100
+eps = 0.08
+t = torch.linspace(0,T,2) #only take initial and final time for MLE
+
+
+x = torch.linspace(-2,2,x_amount)
+y = torch.linspace(-2,2,x_amount)
+X, Y = torch.meshgrid(x, y)
+
+inputs = torch.stack([X,Y], dim=-1)
+print(f'{inputs.size() = }')
+# print(inputs)
+
+trajectories = anode.flow.trajectory(inputs, num_steps).detach()
+t_indices = torch.tensor([0,-1])
+
+trajectories = trajectories[t_indices] #only take the initial and final time of the trajectory
+print('shape of trajectories of grid', trajectories.shape) #MLE works with the time in the last dimension
+trajectories = trajectories.permute(1,2,3,0)
+print('shape of permuted traj of grid', trajectories.shape) #this fits with the MLE function
+
+output = MLE(trajectories,t,eps)
+print(output)
+output = output[:,:,-1] #reduce to last time instance T
+
+
+
+# %%
+# Create heatmap using imshow
+anodeimg = plt.imshow(np.rot90(output), origin='upper', extent=(-2, 2, -2, 2), cmap='viridis')
+vmin, vmax = anodeimg.get_clim()
+plt.colorbar()  # Show color scale
+plt.savefig('MLE.png',bbox_inches='tight', dpi=300, format='png', facecolor = 'white')
+plt.close()
+
+img = Image(filename = 'MLE.png', width = 400)
+
+display(img)
+
+# %% [markdown]
+# # compare output (from rough computation) and lyap2 (from more refined computation)
+
+# %%
+from matplotlib import colors
+
+
+vmin = min([min(output.flatten()), min(lyap2.flatten())])
+vmax = max([max(output.flatten()), max(lyap2.flatten())])
+norm = colors.Normalize(vmin=vmin, vmax=vmax)
+
+anodeimg = plt.imshow(np.rot90(output), origin='upper', extent=(-2, 2, -2, 2), cmap='viridis')
+anodeimg.set_norm(norm)
+plt.colorbar()
+plt.savefig('MLE_rough.png',bbox_inches='tight', dpi=300, format='png', facecolor = 'white')
+plt.close()
+
+lyapimg = plt.imshow(np.rot90(lyap2), origin='upper', extent=(-2, 2, -2, 2), cmap='viridis')
+lyapimg.set_norm(norm)
+plt.colorbar()
+plt.savefig('MLE_integration.png',bbox_inches='tight', dpi=300, format='png', facecolor = 'white')
+plt.close()
+
+img1 = Image(filename = 'MLE_rough.png', width = 400)
+img2 = Image(filename = 'MLE_integration.png', width = 400)
+
+display(img1,img2)
 
 # %%
