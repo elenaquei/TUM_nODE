@@ -69,19 +69,21 @@ hidden_dim, data_dim = 2, 2
 augment_dim = 0
 
 #T is the end time of the neural ODE evolution, num_steps are the amount of discretization steps for the ODE solver
-T, num_steps = 20, 2000
+T, num_steps = 4, 2000
 bound = 0.
 fp = False #this recent change made things not work anymore
 cross_entropy = False
 turnpike = False
 
 non_linearity = 'tanh' #'relu' #
-architecture = 'inside' #outside
+architecture = 'outside' #outside
 
 # %% [markdown]
 # ## Training and generating level sets
 
 # %%
+import torch
+
 
 num_epochs = 80 #number of optimization runs in which the dataset is used for gradient decent
 eps = 0.2
@@ -93,11 +95,19 @@ anode = NeuralODE(device, data_dim, hidden_dim, augment_dim=augment_dim, non_lin
 optimizer_anode = torch.optim.Adam(anode.parameters(), lr=1e-3) 
 
 # %%
+print(anode)
+
+anode.print_to_file('test.txt')
+
+# %%
 from models.training import doublebackTrainer
 
 trainer_anode = doublebackTrainer(anode, optimizer_anode, device, cross_entropy=cross_entropy, turnpike = turnpike,
                          bound=bound, fixed_projector=fp, verbose = True, eps_comp = 0.2) 
 trainer_anode.train(dataloader, num_epochs)
+
+# %%
+print(anode)
 
 # %% [markdown]
 # ### Check the basins of attraction

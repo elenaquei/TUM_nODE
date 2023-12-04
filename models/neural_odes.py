@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 @author: borjangeshkovski (adapted from https://github.com/EmilienDupont/augmented-neural-odes)
+further adapted by Elena Queirolo
 """
 ##------------#
 import torch
@@ -133,6 +134,44 @@ class Dynamics(nn.Module):
             out = torch.min(out1, out2)
             out = out.matmul(w2_t.t())
         return out
+    
+    def __str__(self):
+        "a __str__ function for readability with print statements"
+        activation_string = [i for i in activations if activations[i]==self.non_linearity]
+        string = str()
+        if self.architecture < 1:
+            if self.architecture == -1:
+                string += str('w(t)'+ activation_string[0] + '(x(t))+b(t)    over the interval t = [0, ' + str(self.T) + '],n\n')
+            else:
+                string += str(activation_string[0] + '(w(t)x(t)+b(t))    over the interval t = [0, ' + str(self.T) + '],\n\n')
+            for k in range(self.T):
+                string += str('W[' + str(k) + '] = ' + str(self.fc2_time[k].weight.detach().numpy()) + ',        b[' + str(k) + '] = ' +  str(self.fc2_time[k].bias.detach().numpy()) + '\n\n')
+        else:
+            string += str('w1(t)' + activation_string[0] + '(w2(t)x(t)+b2(t))+b1(t)    over the interval t = [0, ' + str(self.T) + '],\n\n')
+            for k in range(self.T):
+                string += str('W1[' + str(k) + '] = ' + str(self.fc1_time[k].weight.detach().numpy()) + ',        b1[' + str(k) + '] = ' + str(self.fc1_time[k].bias.detach().numpy()) + '\n\n')
+                string += str('W2[' + str(k) + '] = ' + str(self.fc3_time[k].weight.detach().numpy()) + ',        b2[' + str(k) + '] = ' + str(self.fc3_time[k].bias.detach().numpy()) + '\n\n')
+        return string
+
+        
+    def print_to_file(self, filename):
+        activation_string = [i for i in activations if activations[i]==self.non_linearity]
+        string = str('T = ' + str(self.T) + '\n')
+        if self.architecture < 1:
+            if self.architecture == -1:
+                string += str('w(t)'+ activation_string[0] + '(x(t))+b(t)\n')
+            else:
+                string += str(activation_string[0] + '(w(t)x(t)+b(t))\n')
+            for k in range(self.T):
+                string += str('W[' + str(k) + '] = ' + str(self.fc2_time[k].weight.detach().numpy()) + '\nb[' + str(k) + '] = ' +  str(self.fc2_time[k].bias.detach().numpy()) + '\n\n')
+        else:
+            string += str('w1(t)' + activation_string[0] + '(w2(t)x(t)+b2(t))+b1(t)\n')
+            for k in range(self.T):
+                string += str('W1[' + str(k) + '] = ' + str(self.fc1_time[k].weight.detach().numpy()) + '\nb1[' + str(k) + '] = ' + str(self.fc1_time[k].bias.detach().numpy()) + '\n\n')
+                string += str('W2[' + str(k) + '] = ' + str(self.fc3_time[k].weight.detach().numpy()) + '\nb2[' + str(k) + '] = ' + str(self.fc3_time[k].bias.detach().numpy()) + '\n\n')
+        with open(filename, "w") as text_file:
+            text_file.write(string)
+        return
 
 
 class Dynamics_reduced(nn.Module):
@@ -181,7 +220,43 @@ class Dynamics_reduced(nn.Module):
 
         return layer_output
 
+    def __str__(self):
+        "a __str__ function for readability with print statements"
+        activation_string = [i for i in activations if activations[i]==self.non_linearity]
+        string = str()
+        if self.architecture < 1:
+            if self.architecture == -1:
+                string += str('w(t)'+ activation_string[0] + '(x(t))+b(t)    over the interval t = [0, ' + self.T + ']\n')
+            else:
+                string += str(activation_string[0] + '(w(t)x(t)+b(t))\n')
+            for k in range(self.T):
+                string += str('W[' + str(k) + '] = ' + str(self.fc2_time[k].weight.detach().numpy()) + ',        b[' + str(k) + '] = ' +  str(self.fc2_time[k].bias.detach().numpy()) + '\n')
+        else:
+            string += str('w1(t)' + activation_string[0] + '(w2(t)x(t)+b2(t))+b1(t)\n')
+            for k in range(self.T):
+                string += str('W1[' + str(k) + '] = ' + str(self.fc1_time[k].weight.detach().numpy()) + ',        b1[' + str(k) + '] = ' + str(self.fc1_time[k].bias.detach().numpy()) + '\n')
+                string += str('W2[' + str(k) + '] = ' + str(self.fc3_time[k].weight.detach().numpy()) + ',        b2[' + str(k) + '] = ' + str(self.fc3_time[k].bias.detach().numpy()) + '\n')
+        return string
 
+        
+        def print_to_file(self, filename):
+        activation_string = [i for i in activations if activations[i]==self.non_linearity]
+        string = str('T = ' + str(self.T) + '\n')
+        if self.architecture < 1:
+            if self.architecture == -1:
+                string += str('w(t)'+ activation_string[0] + '(x(t))+b(t)\n')
+            else:
+                string += str(activation_string[0] + '(w(t)x(t)+b(t))\n')
+            for k in range(self.T):
+                string += str('W[' + str(k) + '] = ' + str(self.fc2_time[k].weight.detach().numpy()) + '\nb[' + str(k) + '] = ' +  str(self.fc2_time[k].bias.detach().numpy()) + '\n\n')
+        else:
+            string += str('w1(t)' + activation_string[0] + '(w2(t)x(t)+b2(t))+b1(t)\n')
+            for k in range(self.T):
+                string += str('W1[' + str(k) + '] = ' + str(self.fc1_time[k].weight.detach().numpy()) + '\nb1[' + str(k) + '] = ' + str(self.fc1_time[k].bias.detach().numpy()) + '\n\n')
+                string += str('W2[' + str(k) + '] = ' + str(self.fc3_time[k].weight.detach().numpy()) + '\nb2[' + str(k) + '] = ' + str(self.fc3_time[k].bias.detach().numpy()) + '\n\n')
+        with open(filename, "w") as text_file:
+            text_file.write(string)
+        return
 
 
 class adj_Dynamics(nn.Module):
@@ -378,6 +453,14 @@ class NeuralODE(nn.Module):
         if return_features:
             return features, pred
         return pred, self.proj_traj
+    
+    def __str__(self):
+        return str(self.flow.dynamics)
+
+    def print_to_file(self, filename):
+        self.flow.dynamics.print_to_file(filename)
+        return
+
 
 class NeuralODEvar(nn.Module):
     """
