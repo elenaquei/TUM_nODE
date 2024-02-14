@@ -144,11 +144,11 @@ class Dynamics(nn.Module):
                 string += str('w(t)'+ activation_string[0] + '(x(t))+b(t)    over the interval t = [0, ' + str(self.T) + '],n\n')
             else:
                 string += str(activation_string[0] + '(w(t)x(t)+b(t))    over the interval t = [0, ' + str(self.T) + '],\n\n')
-            for k in range(self.T):
+            for k in range(self.time_steps):
                 string += str('W[' + str(k) + '] = ' + str(self.fc2_time[k].weight.detach().numpy()) + ',        b[' + str(k) + '] = ' +  str(self.fc2_time[k].bias.detach().numpy()) + '\n\n')
         else:
             string += str('w1(t)' + activation_string[0] + '(w2(t)x(t)+b2(t))+b1(t)    over the interval t = [0, ' + str(self.T) + '],\n\n')
-            for k in range(self.T):
+            for k in range(self.time_steps):
                 string += str('W1[' + str(k) + '] = ' + str(self.fc1_time[k].weight.detach().numpy()) + ',        b1[' + str(k) + '] = ' + str(self.fc1_time[k].bias.detach().numpy()) + '\n\n')
                 string += str('W2[' + str(k) + '] = ' + str(self.fc3_time[k].weight.detach().numpy()) + ',        b2[' + str(k) + '] = ' + str(self.fc3_time[k].bias.detach().numpy()) + '\n\n')
         return string
@@ -162,11 +162,11 @@ class Dynamics(nn.Module):
                 string += str('w(t)'+ activation_string[0] + '(x(t))+b(t)\n')
             else:
                 string += str(activation_string[0] + '(w(t)x(t)+b(t))\n')
-            for k in range(self.T):
+            for k in range(self.time_steps):
                 string += str('W[' + str(k) + '] = ' + str(self.fc2_time[k].weight.detach().numpy()) + '\nb[' + str(k) + '] = ' +  str(self.fc2_time[k].bias.detach().numpy()) + '\n\n')
         else:
             string += str('w1(t)' + activation_string[0] + '(w2(t)x(t)+b2(t))+b1(t)\n')
-            for k in range(self.T):
+            for k in range(self.time_steps):
                 string += str('W1[' + str(k) + '] = ' + str(self.fc1_time[k].weight.detach().numpy()) + '\nb1[' + str(k) + '] = ' + str(self.fc1_time[k].bias.detach().numpy()) + '\n\n')
                 string += str('W2[' + str(k) + '] = ' + str(self.fc3_time[k].weight.detach().numpy()) + '\nb2[' + str(k) + '] = ' + str(self.fc3_time[k].bias.detach().numpy()) + '\n\n')
         with open(filename, "w") as text_file:
@@ -229,17 +229,17 @@ class Dynamics_reduced(nn.Module):
                 string += str('w(t)'+ activation_string[0] + '(x(t))+b(t)    over the interval t = [0, ' + self.T + ']\n')
             else:
                 string += str(activation_string[0] + '(w(t)x(t)+b(t))\n')
-            for k in range(self.T):
+            for k in range(self.time_steps):
                 string += str('W[' + str(k) + '] = ' + str(self.fc2_time[k].weight.detach().numpy()) + ',        b[' + str(k) + '] = ' +  str(self.fc2_time[k].bias.detach().numpy()) + '\n')
         else:
             string += str('w1(t)' + activation_string[0] + '(w2(t)x(t)+b2(t))+b1(t)\n')
-            for k in range(self.T):
+            for k in range(self.time_steps):
                 string += str('W1[' + str(k) + '] = ' + str(self.fc1_time[k].weight.detach().numpy()) + ',        b1[' + str(k) + '] = ' + str(self.fc1_time[k].bias.detach().numpy()) + '\n')
                 string += str('W2[' + str(k) + '] = ' + str(self.fc3_time[k].weight.detach().numpy()) + ',        b2[' + str(k) + '] = ' + str(self.fc3_time[k].bias.detach().numpy()) + '\n')
         return string
 
         
-        def print_to_file(self, filename):
+    def print_to_file(self, filename):
         activation_string = [i for i in activations if activations[i]==self.non_linearity]
         string = str('T = ' + str(self.T) + '\n')
         if self.architecture < 1:
@@ -247,11 +247,11 @@ class Dynamics_reduced(nn.Module):
                 string += str('w(t)'+ activation_string[0] + '(x(t))+b(t)\n')
             else:
                 string += str(activation_string[0] + '(w(t)x(t)+b(t))\n')
-            for k in range(self.T):
+            for k in range(self.time_steps):
                 string += str('W[' + str(k) + '] = ' + str(self.fc2_time[k].weight.detach().numpy()) + '\nb[' + str(k) + '] = ' +  str(self.fc2_time[k].bias.detach().numpy()) + '\n\n')
         else:
             string += str('w1(t)' + activation_string[0] + '(w2(t)x(t)+b2(t))+b1(t)\n')
-            for k in range(self.T):
+            for k in range(self.time_steps):
                 string += str('W1[' + str(k) + '] = ' + str(self.fc1_time[k].weight.detach().numpy()) + '\nb1[' + str(k) + '] = ' + str(self.fc1_time[k].bias.detach().numpy()) + '\n\n')
                 string += str('W2[' + str(k) + '] = ' + str(self.fc3_time[k].weight.detach().numpy()) + '\nb2[' + str(k) + '] = ' + str(self.fc3_time[k].bias.detach().numpy()) + '\n\n')
         with open(filename, "w") as text_file:
@@ -446,9 +446,9 @@ class NeuralODE(nn.Module):
             self.traj = self.flow.trajectory(x, self.time_steps)
             pred = self.linear_layer(features)
             self.proj_traj = self.linear_layer(self.traj)
-            if not self.cross_entropy:
-                pred = self.non_linearity(pred)
-                self.proj_traj = self.non_linearity(self.proj_traj)
+            #if not self.cross_entropy:
+            #    pred = self.non_linearity(pred)
+            #    self.proj_traj = self.non_linearity(self.proj_traj)
         
         if return_features:
             return features, pred
