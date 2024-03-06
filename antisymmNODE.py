@@ -49,7 +49,7 @@ g.manual_seed(seed)
 # # Data preparation
 
 # %%
-data_noise = 0.25
+data_noise = 0.15
 plotlim = [-3, 3]
 subfolder = 'traj_moons'
 
@@ -59,117 +59,80 @@ dataloader, dataloader_viz = create_dataloader('moons', noise = data_noise, plot
 
 
 # %% [markdown]
-# ## Model dynamics
+# ## Training and generating level sets
 
 # %%
-#Import of the model dynamics that describe the neural ODE
-#The dynamics are based on the torchdiffeq package, that implements ODE solvers in the pytorch setting
-from models.neural_odes import NeuralODE
+from models.neural_odes import convolutionalNeuralODE
 
-#for neural ODE based networks the network width is constant. In this example the input is 2 dimensional
-hidden_dim, data_dim = 2, 2 
+hidden_dim = 10
+data_dim = 2 
 augment_dim = 0
 
+num_epochs = 80 #number of optimization runs in which the dataset is used for gradient decent
+eps = 0.2
+output_dim = 2
+
 #T is the end time of the neural ODE evolution, num_steps are the amount of discretization steps for the ODE solver
-T, num_steps = 20, 20 
+T, num_steps = 1, 1
 bound = 0.
-fp = False #this recent change made things not work anymore
+fp = False 
 cross_entropy = True
 turnpike = False
 
 non_linearity = 'tanh' #'relu' #
-architecture = 'inside' #outside
-
-
-# %% [markdown]
-# ## Training and generating level sets
-
-# %%
-
-num_epochs = 120 #number of optimization runs in which the dataset is used for gradient decent
-eps = 0.2
+architecture =  'outside' # 'inside' # 
 
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)
-anode = NeuralODE(device, data_dim, hidden_dim, augment_dim=augment_dim, non_linearity=non_linearity, 
-                    architecture=architecture, T=T, time_steps=num_steps, fixed_projector=fp, cross_entropy=cross_entropy)
-optimizer_anode = torch.optim.Adam(anode.parameters(), lr=1e-3) 
+cnode = convolutionalNeuralODE(device, data_dim, hidden_dim, output_dim, non_linearity=non_linearity, 
+                    architecture=architecture, T=T, time_steps=num_steps)
 
-torch.manual_seed(seed)
-torch.cuda.manual_seed(seed)
-rnode = NeuralODE(device, data_dim, hidden_dim, augment_dim=0, non_linearity=non_linearity, 
-                    architecture=architecture, T=T, time_steps=num_steps, fixed_projector=fp, cross_entropy=cross_entropy)
-optimizer_rnode = torch.optim.Adam(rnode.parameters(), lr=1e-3) 
+optimizer_cnode = torch.optim.Adam(cnode.parameters(), lr=1e-3) 
+
 
 # %%
-from models.training import doublebackTrainer
+from models.training import convolutionalTrainer
 
-trainer_anode = doublebackTrainer(anode, optimizer_anode, device, cross_entropy=cross_entropy, turnpike = turnpike,
-                         bound=bound, fixed_projector=fp, verbose = True, eps_comp = 0.2) 
-trainer_anode.train(dataloader, num_epochs)
+antisymm_diag = .03
+trainer_cnode = convolutionalTrainer(cnode, optimizer_cnode, device, cross_entropy=cross_entropy,
+                        verbose = True, antisymm_diag = antisymm_diag)
+trainer_cnode.train(dataloader, num_epochs)
 
 # %%
 from plots.plots import classification_levelsets
-classification_levelsets(anode)
-plt.plot(trainer_anode.histories['epoch_loss_history'])
-plt.xlim(0, len(trainer_anode.histories['epoch_loss_history']) - 1)
+classification_levelsets(cnode)
+plt.plot(trainer_cnode.histories['epoch_loss_history'])
+plt.xlim(0, len(trainer_cnode.histories['epoch_loss_history']) - 1)
 plt.ylim(0)
 plt.xlabel('Iterations')
 plt.ylabel('Loss')
 plt.show()
 
 # %%
-   
-w = anode.linear_layer.weight
-b = anode.linear_layer.bias
+from scipy.io import savemat
 
-print(w)
-print(b)
+W = cnode.flow.dynamics.fc2_time[0].weight.detach().numpy()
+b = cnode.flow.dynamics.fc2_time[0].bias.detach().numpy()
 
-rnode.linear_layer.weight = w
-rnode.linear_layer.bias = b
-
-rnode.linear_layer.requires_grad =  False
+#print(W,b)
+dic = {"W": W, "b": b, "gamma": antisymm_diag}
+savemat("coefs_convolutionalNode.mat", dic)
 
 # %%
-from plots.plots import classification_levelsets
-classification_levelsets(rnode)
-plt.plot(trainer_rnode.histories['epoch_loss_history'])
-plt.xlim(0, len(trainer_rnode.histories['epoch_loss_history']) - 1)
-plt.ylim(0)
-plt.xlabel('Iterations')
-plt.ylabel('Loss')
-plt.show()
+added_loss = 0
+for W in trainer_cnode.model.parameters():
+    if len(list(W.size())) == 2 and list(W.size())[0] == list(W.size())[1]:
+        added_loss += torch.norm(W + W.T) + torch.linalg.vector_norm(W.diag() - trainer_cnode.antisymm_diag)
+        print(torch.linalg.vector_norm(W.diag() - trainer_cnode.antisymm_diag))
+
 
 # %%
-from plots.plots import classification_levelsets
-import os
-
-if not os.path.exists(subfolder):
-        os.makedirs(subfolder)
-        
-footnote = f'{num_epochs = }, {num_steps = }, {data_noise = }'
-        
-fig_name_base = os.path.join(subfolder, 'levelsets')
-classification_levelsets(anode, fig_name_base, footnote = footnote + 'eps = 0')
-classification_levelsets(rnode, fig_name_base + '_rob', footnote = footnote + f'{eps = }')
-from IPython.display import Image
-img1 = Image(filename = fig_name_base + '.png', width = 400)
-img2 = Image(filename = fig_name_base + '_rob.png', width = 400)
-
-display(img1,img2)
+added_loss.item()
 
 # %%
-plt.plot(trainer_anode.histories['epoch_loss_history'])
-plt.xlim(0, len(trainer_anode.histories['epoch_loss_history']) - 1)
-plt.ylim(0)
-plt.xlabel('Iterations')
-plt.ylabel('Loss')
-plt.show()
+torch.linalg.vector_norm(W.diag() - trainer_cnode.antisymm_diag)
 
-plt.plot(trainer_rnode.histories['epoch_loss_history'])
-plt.xlim(0, len(trainer_rnode.histories['epoch_loss_history']) - 1)
-plt.ylim(0)
-plt.xlabel('Iterations')
-plt.ylabel('Loss')
-plt.show()
+# %%
+torch.norm(W + W.T)
+
+# %%
