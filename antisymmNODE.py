@@ -80,7 +80,7 @@ cross_entropy = True
 turnpike = False
 
 non_linearity = 'tanh' #'relu' #
-architecture =  'outside' # 'inside' # 
+architecture = 'outside' # 'inside' #
 
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)
@@ -117,22 +117,3 @@ b = cnode.flow.dynamics.fc2_time[0].bias.detach().numpy()
 #print(W,b)
 dic = {"W": W, "b": b, "gamma": antisymm_diag}
 savemat("coefs_convolutionalNode.mat", dic)
-
-# %%
-added_loss = 0
-for W in trainer_cnode.model.parameters():
-    if len(list(W.size())) == 2 and list(W.size())[0] == list(W.size())[1]:
-        added_loss += torch.norm(W + W.T) + torch.linalg.vector_norm(W.diag() - trainer_cnode.antisymm_diag)
-        print(torch.linalg.vector_norm(W.diag() - trainer_cnode.antisymm_diag))
-
-
-# %%
-added_loss.item()
-
-# %%
-torch.linalg.vector_norm(W.diag() - trainer_cnode.antisymm_diag)
-
-# %%
-torch.norm(W + W.T)
-
-# %%
