@@ -635,14 +635,14 @@ def create_dataloader(data_type, batch_size = 3000, noise = 0.15, factor = 0.15,
     elif data_type == 'repr': # REPRESSILATOR
         
         size = [batch_size, 3]   #dimension of the pytorch tensor to be generated
-        low,high = 0,2 #range of uniform distribution
+        low,high = plotlim #range of uniform distribution
 
         X = torch.distributions.uniform.Uniform(low,high).sample(size)
         
         def repressilator(xyz, t):
             x, y, z = xyz[0], xyz[1], xyz[2]
             n = 5
-            gamma, lx, ly, lz, deltax, deltay, deltaz, thetax, thetay, thetaz = 0.5, 0.01, 0.02, 0.03, 0.1, 0.2, 0.3, 1, 2, 3
+            gamma, lx, ly, lz, deltax, deltay, deltaz, thetax, thetay, thetaz = 0.05, 0.01, 0.02, 0.03, 3.1, 3.2, 2.7, 1, 1.1, 1.2
             x_dot = - gamma * x + lx + deltax * thetax**n / (thetax**n + z**n)
             y_dot = - gamma * y + ly + deltay * thetay**n / (thetay**n + x**n)
             z_dot = - gamma * z + lz + deltaz * thetaz**n / (thetaz**n + y**n)
