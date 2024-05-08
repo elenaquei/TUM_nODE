@@ -658,12 +658,21 @@ def create_dataloader(data_type, batch_size = 3000, noise = 0.15, factor = 0.15,
 
     train = DataLoader(train_data, batch_size=64, shuffle=shuffle, generator=g)
     test = DataLoader(test_data, batch_size=256, shuffle=shuffle, generator = g) #128 before
+    
+    visualize_dataloader(train, label, plotlim)
+    
+    return train, test
+
+
+def visualize_dataloader(dataloader, label, plotlim, save = False, name = 'trainingset'):
+    x, y = dataloader.dataset.tensors
+    plotlim = [-3, 3]    
     if label == 'scalar':
-        data_0 = X_train[y_train == 0]
-        data_1 = X_train[y_train == 1]
+        data_0 = x[y == 0]
+        data_1 = x[y == 1]
     else:
-        data_0 = X_train[y_train[:,0] > 0]
-        data_1 = X_train[y_train[:,0] < 0]
+        data_0 = x[y[:,0] > 0]
+        data_1 = x[y[:,0] < 0]
     fig = plt.figure(figsize = (5,5), dpi = 100)
     plt.scatter(data_0[:, 0], data_0[:, 1], edgecolor="#333",  alpha = 0.5)
     plt.scatter(data_1[:, 0], data_1[:, 1], edgecolor="#333", alpha = 0.5)
@@ -671,7 +680,7 @@ def create_dataloader(data_type, batch_size = 3000, noise = 0.15, factor = 0.15,
     plt.ylim(plotlim)
     ax = plt.gca()
     ax.set_aspect('equal')
-    plt.savefig('trainingset.png', bbox_inches='tight', dpi=300, format='png', facecolor = 'white')
+    if save:
+        plt.savefig(name, bbox_inches='tight', dpi=300, format='png', facecolor = 'white')
     plt.show()
-    
-    return train, test
+    return

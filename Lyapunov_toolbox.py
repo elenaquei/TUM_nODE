@@ -20,6 +20,7 @@ import numpy as np
 import scipy
 import torch
 from models.neural_odes import NeuralODE
+import warnings
 
 
 def linear_dynamics(node, derivative):
@@ -59,7 +60,6 @@ def linear_dynamics(node, derivative):
             Df_x = Df_x.numpy()
         
         Dfx_Y = np.matmul(Df_x, Y).flatten()
-        
         rhs = np.concatenate((f_x_torch, Dfx_Y))
         return rhs
     
@@ -99,12 +99,13 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
     
     # set up of initial values
     Jac = np.identity(x.size)
-    x_and_Jac_t = np.concatenate((x,Jac.flatten()))
+    Q_t = np.identity(x.size)
+    x_and_Jac_t = np.concatenate((x, Jac.flatten()))
     L = np.zeros(x.size)
 
     #selection functionalities
-    select_Jac_int = lambda mat: np.reshape(mat[-1,x.size:],[x.size,x.size])
-    select_x_int = lambda mat: mat[-1,:x.size]
+    select_Jac_int = lambda mat: np.reshape(mat[-1, x.size:], [x.size, x.size])
+    select_x_int = lambda mat: mat[-1, :x.size]
     
     # first flow forward
     #x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(node, der), x_and_Jac_t, [0, integration_time])
@@ -114,8 +115,10 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
     
     # set up of time values 
     start_time = 0
+
+    warnings.warn("only one iteration to test results")
     
-    iters = 20  # number of iterations done
+    iters = 1  # number of iterations done
     n_start_iter = 0 # number of integration time used to get in position
     length_iter = integration_time/iters # length of each iteration
     used_time = (iters - n_start_iter) * length_iter
@@ -127,8 +130,9 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
         
         Jac_t = select_Jac_int(x_and_Jac_t)
         
-        Q_t, R_t = np.linalg.qr(Jac_t)
-        x_and_Jac_t = np.concatenate((select_x_int(x_and_Jac_t),Q_t.flatten())) # for numerical stability
+        Q_t, R_t = np.linalg.qr(np.matmul(Jac_t, Q_t)) # Qi Ri = Yi Qi-1
+        x_and_Jac_t = np.concatenate((select_x_int(x_and_Jac_t), np.identity(x.size).flatten()))
+        # for numerical stability, reset Y to the identity
 
         # if the system has stabilised, the lyapunov computation takes place
         if i >= n_start_iter:
