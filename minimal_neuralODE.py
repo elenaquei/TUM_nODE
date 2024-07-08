@@ -57,7 +57,7 @@ def build_neuralODE(trained = True, data = False):
     augment_dim = 0
     
     #T is the end time of the neural ODE evolution, num_steps are the amount of discretization steps for the ODE solver
-    T, num_steps = 4, 5
+    T, num_steps = 4, 100
     bound = 0.
     fp = False #this recent change made things not work anymore
     cross_entropy = False
