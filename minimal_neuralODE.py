@@ -82,9 +82,11 @@ def build_neuralODE(trained = True, data = False):
     else:
         return anode
 
+
 def plot_data(data):
     visualize_dataloader(data, label = 'vector', plotlim = [-3, 3])
     return
+
 
 if __name__ == "__main__":
     build_neuralODE
