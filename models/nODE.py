@@ -11,6 +11,17 @@ from torchdiffeq import odeint, odeint_adjoint
 from warnings import warn
 import numpy as np
 
+import matplotlib.pyplot as plt
+from matplotlib import rc
+from mpl_toolkits.mplot3d import Axes3D
+
+import seaborn as sns
+from matplotlib.colors import to_rgb
+import imageio
+
+from matplotlib.colors import LinearSegmentedColormap
+import os
+
 # from adjoint_neural_ode import adj_Dynamics
 
 # odeint Returns:
@@ -137,7 +148,6 @@ class nODE(nn.Module):
             w2_t = self.outside_weights[layer].weight
             b2_t = self.outside_weights[layer].bias
             out = out.matmul(w2_t.t()) + b2_t
-
         return out
 
     def derivative(self, t, x):
@@ -172,7 +182,6 @@ class nODE(nn.Module):
             out = w2_t.matmul(out)
 
             # x.matmul(w1_t.t()) is the same as torch.matmul(w1_t,x) simple matrix-vector multiplication
-
         return out
 
     def compute_dt(self):
@@ -185,6 +194,25 @@ class nODE(nn.Module):
             integration_interval = torch.tensor(time_intervals).float().type_as(x)
         else:
             integration_interval = torch.tensor(self.time_interval).float().type_as(x)
+        if self.first_layer_bool:
+            x_in = self.first_layer(x)
+        else:
+            x_in = x
+        dt = self.compute_dt()
+        out = odeint(self.right_hand_side, x_in, integration_interval, method='euler', options={'step_size': dt})
+        out = out[1, :, :]
+        if self.last_layer_bool:
+            x_out = self.last_layer(out)
+        else:
+            x_out = out
+        return x_out
+
+    def forward_integration(self, x, integration_time=None):
+        if integration_time is None:
+            time_intervals = torch.tensor([self.time_interval[0], self.time_interval[1]])
+            integration_interval = torch.tensor(time_intervals).float().type_as(x)
+        else:
+            integration_interval = torch.tensor([integration_time[0], integration_time[1]])
         if self.first_layer_bool:
             x_in = self.first_layer(x)
         else:
@@ -270,12 +298,17 @@ class nODE(nn.Module):
 
         return out
 
-    def lyapunov_approx(self, x, eps=10**-4):
+    def lyapunov_approx(self, x, eps=10**-4, integration_time=None):
         if len(x.size()) == 1:
             x = x.view([1, x.shape[0]])
-        perturbation_x = x + eps * torch.Tensor(torch.rand(x.size()))
-        y, perturbation_y = self.forward(x), self.forward(perturbation_x)
-        lyap = torch.log(torch.norm(y-perturbation_y))/(self.time_interval[1]-self.time_interval[0])
+        perturbation = torch.Tensor(torch.rand(x.size()))
+        perturbation_x = x + eps * perturbation/torch.norm(perturbation)
+        y, perturbation_y = self.forward_integration(x, integration_time), self.forward_integration(perturbation_x, integration_time)
+        if integration_time is None:
+            time_interval = self.time_interval[1]-self.time_interval[0]
+        else:
+            time_interval = integration_time[1] - integration_time[0]
+        lyap = torch.log(torch.norm(y-perturbation_y)/eps)/time_interval
         return lyap
 
     def lyapunov_system(self, t, xy):
@@ -286,22 +319,47 @@ class nODE(nn.Module):
         xdot_ydot = torch.cat([xdot, torch.reshape(ydot, (-1,))])
         return xdot_ydot
 
-    def lyapunov_integration(self, x):
+    def lyapunov_integration(self, x, lyap_approx=None, integration_time=None):
+        if integration_time is None:
+            time_intervals = torch.tensor([self.time_interval[0], self.time_interval[1]])
+            integration_interval = torch.tensor(time_intervals).float().type_as(x)
+        else:
+            integration_interval = torch.tensor([integration_time[0], integration_time[1]])
         if self.first_layer_bool:
             x_in = self.first_layer(x)
         else:
             x_in = x
-        Y = torch.eye(self.ODE_dim)
+        if lyap_approx is None:
+            Y = torch.eye(self.ODE_dim)
+        else:
+            Y = torch.diag(torch.exp(lyap_approx))
         xy0 = torch.cat([x_in, torch.reshape(Y, (-1,))])
-        integration_interval = torch.tensor(self.time_interval).float().type_as(x)
         dt = self.compute_dt()
         out = odeint(self.lyapunov_system, xy0, integration_interval, method='euler', options={'step_size': dt})
         out = out[1, :]
         Y_end = out[self.ODE_dim:].reshape((self.ODE_dim, self.ODE_dim))
         Lmat = Y_end.T.matmul(Y_end).detach().numpy()
-        time = self.time_interval[1] - self.time_interval[0]
-        lyap = np.max(np.linalg.eig(Lmat)[0])/(2*time)
+        time = integration_interval[1] - integration_interval[0]
+        lyap = np.log(np.linalg.eig(Lmat)[0])/(2*time)
         return lyap
+
+    def lyapunov_informed_integration(self, x, tol=10**-2):
+        if self.first_layer_bool:
+            x_in = self.first_layer(x)
+        else:
+            x_in = x
+        temp_first_layer = self.first_layer_bool  # only concentrate on the ODE component
+        self.first_layer_bool = False
+        old_lyap = 1 + 0*x
+        new_lyap = torch.Tensor(self.lyapunov_integration(x_in, lyap_approx=old_lyap))
+        maxnIter = 10
+        nIter = 1
+        while torch.linalg.norm(old_lyap - new_lyap) > tol and nIter < maxnIter:
+            old_lyap = new_lyap
+            new_lyap = torch.Tensor(self.lyapunov_integration(x_in, lyap_approx=old_lyap))
+            nIter += 1
+        self.first_layer_bool = temp_first_layer
+        return new_lyap, nIter
 
 
 def grad_loss_inputs(model, data_inputs, data_labels, loss_module):
@@ -316,3 +374,65 @@ def grad_loss_inputs(model, data_inputs, data_labels, loss_module):
     data_inputs_grad = torch.autograd.grad(loss, data_inputs)[0]
     data_inputs.requires_grad = False
     return data_inputs_grad
+
+
+@torch.no_grad()
+def classification_levelsets(model, fig_name=None, footnote=None, contour = True, plotlim = [-2, 2]):
+    
+    
+    x1lower, x1upper = plotlim
+    x2lower, x2upper = plotlim
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    fig = plt.figure(figsize=(5, 5), dpi=100)
+    
+    plt.ylabel(r"$x_2$")
+    plt.xlabel(r"$x_1$")
+    plt.figtext(0.5, 0, footnote, ha="center", fontsize=10)
+
+    
+   
+    model.to(device)
+
+    x1 = torch.arange(x1lower, x1upper, step=0.01, device=device)
+    x2 = torch.arange(x2lower, x2upper, step=0.01, device=device)
+    xx1, xx2 = torch.meshgrid(x1, x2)  # Meshgrid function as in numpy
+    model_inputs = torch.stack([xx1, xx2], dim=-1)
+    
+    preds = model(model_inputs)
+    
+    # dim = 2 means that it normalizes along the last dimension, i.e. along the two predictions that are the model output
+    m = torch.nn.Softmax(dim=2)
+    # softmax normalizes the model predictions to probabilities
+    preds = m(preds)
+
+    #we only need the probability for being in class1 (as prob for class2 is then 1- class1)
+    preds = preds[:, :, 0]
+    preds = preds.unsqueeze(2)  # adds a tensor dimension at position 2
+    
+    plt.grid(False)
+    plt.xlim([x1lower, x1upper])
+    plt.ylim([x2lower, x2upper])
+
+    ax = plt.gca()
+    ax.set_aspect('equal') 
+    
+    if contour:
+        colors = [to_rgb("C1"), [1, 1, 1], to_rgb("C0")] # first color is orange, last is blue
+        cm = LinearSegmentedColormap.from_list(
+            "Custom", colors, N=40)
+        z = np.array(preds).reshape(xx1.shape)
+        
+        levels = np.linspace(0.,1.,8).tolist()
+        
+        cont = plt.contourf(xx1, xx2, z, levels, alpha=1, cmap=cm, zorder = 0, extent=(x1lower, x1upper, x2lower, x2upper)) #plt.get_cmap('coolwarm')
+        cbar = fig.colorbar(cont, fraction=0.046, pad=0.04)
+        cbar.ax.set_ylabel('prediction prob.')
+    
+
+    if fig_name:
+        plt.savefig(fig_name + '.png', bbox_inches='tight', dpi=300, format='png', facecolor = 'white')
+        plt.clf()
+        plt.close()
+    else: plt.show()

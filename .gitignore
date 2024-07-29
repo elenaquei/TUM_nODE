@@ -18,3 +18,7 @@ traj_moons/.DS_Store
 Pipfile.lock
 
 *.gif
+
+.idea/TUM_nODE.iml
+
+.ipynb_checkpoints/
