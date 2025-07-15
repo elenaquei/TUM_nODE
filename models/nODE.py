@@ -40,6 +40,10 @@ def tanh_prime(input):
         input)
 
 
+def identity_prime(input):
+    # use torch.sigmoid to make sure that we created the most efficient implemetation based on builtin PyTorch functions
+    return 1 - 0*input
+
 # create a class wrapper from PyTorch nn.Module, so
 # the function now can be easily used in models
 class Tanh_Prime(nn.Module):
@@ -77,9 +81,11 @@ activations = {'tanh': nn.Tanh(),
                'relu': nn.ReLU(),
                'sigmoid': nn.Sigmoid(),
                'leakyrelu': nn.LeakyReLU(negative_slope=0.25, inplace=True),
-               'tanh_prime': tanh_prime
+               'tanh_prime': tanh_prime,
+               'identity' : nn.Identity()
                }
-derivatives_activations = {'tanh': tanh_prime  # at the moment, we only care about tanh non-linearity
+derivatives_activations = {'tanh': tanh_prime,
+                           'identity': identity_prime # at the moment, we only care about tanh non-linearity
                            }
 architectures = {'inside_weights': -1, 'outside_weights': 0, 'both': 1}
 
@@ -133,20 +139,48 @@ class nODE(nn.Module):
         dt = time_length / self.n_layers
         return int(torch.floor(t / dt))
 
+    def layers_and_interpolation(self, t):
+        if t < self.time_interval[0]:
+            return 0
+        if t > self.time_interval[1]:
+            return self.n_layers
+        time_length = self.time_interval[1] - self.time_interval[0]
+        dt = time_length / self.n_layers
+        time_from_start = t - self.time_interval[0]
+        layer_left = int(torch.floor(time_from_start/ dt))
+        layer_right = int(torch.floor(time_from_start / dt)) + 1
+        interpolation = time_from_start - dt * layer_left
+        if layer_right > self.n_layers - 1:
+            layer_right = self.n_layers - 1
+        return layer_left, layer_right, interpolation
+
     def right_hand_side(self, t, x):
-        layer = self.layer_selection(t)
+        # layer = self.layer_selection(t)
+        layer_left, layer_right, time = self.layers_and_interpolation(t)
+        interpolation = lambda x0, x1 : x0 # (1 - time) * x0 + time * x1  ## NO INTERPOLATION! why was it there?
         if architectures[self.architecture] == 1:  # outside architecture ahs no inside layer
             out = x
         else:
-            w1_t = self.inside_weights[layer].weight
-            b1_t = self.inside_weights[layer].bias
+            w1_t0 = self.inside_weights[layer_left].weight
+            b1_t0 = self.inside_weights[layer_left].bias
+            w1_t1 = self.inside_weights[layer_right].weight
+            b1_t1 = self.inside_weights[layer_right].bias
+
+            w1_t = interpolation(w1_t0, w1_t1)
+            b1_t = interpolation(b1_t0, b1_t1)
             out = x.matmul(w1_t.t()) + b1_t
         out = self.non_linearity(out)
         if architectures[self.architecture] == 0:  # inside architecture has no outside layer
             out = out
         else:
-            w2_t = self.outside_weights[layer].weight
-            b2_t = self.outside_weights[layer].bias
+            w2_t0 = self.outside_weights[layer_left].weight
+            b2_t0 = self.outside_weights[layer_left].bias
+            w2_t1 = self.outside_weights[layer_right].weight
+            b2_t1 = self.outside_weights[layer_right].bias
+            
+            w2_t = interpolation(w2_t0, w2_t1)
+            b2_t = interpolation(b2_t0, b2_t1)
+            
             out = out.matmul(w2_t.t()) + b2_t
         return out
 
@@ -185,7 +219,7 @@ class nODE(nn.Module):
         return out
 
     def compute_dt(self):
-        dt = (self.time_interval[1] - self.time_interval[0]) / (50 * self.n_layers)
+        dt = (self.time_interval[1] - self.time_interval[0]) / (20 * self.n_layers)
         return dt
 
     def forward(self, x, return_features=False):
@@ -207,20 +241,21 @@ class nODE(nn.Module):
             x_out = out
         return x_out
 
-    def forward_integration(self, x, integration_time=None):
+    def forward_integration(self, x, integration_time=None, outer_layers=True):
         if integration_time is None:
             time_intervals = torch.tensor([self.time_interval[0], self.time_interval[1]])
             integration_interval = torch.tensor(time_intervals).float().type_as(x)
         else:
             integration_interval = torch.tensor([integration_time[0], integration_time[1]])
-        if self.first_layer_bool:
+        if self.first_layer_bool and outer_layers:
             x_in = self.first_layer(x)
         else:
             x_in = x
         dt = self.compute_dt()
         out = odeint(self.right_hand_side, x_in, integration_interval, method='euler', options={'step_size': dt})
-        out = out[1, :, :]
-        if self.last_layer_bool:
+        if len(out.shape) == 3:
+            out = out[1, :, :]
+        if self.last_layer_bool and outer_layers:
             x_out = self.last_layer(out)
         else:
             x_out = out

@@ -22,3 +22,9 @@ Pipfile.lock
 .idea/TUM_nODE.iml
 
 .ipynb_checkpoints/
+
+newnode_lyapunov.ipynb
+
+.idea/
+
+detect_separatrices.ipynb
