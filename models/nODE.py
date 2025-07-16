@@ -135,7 +135,7 @@ class nODE(nn.Module):
         if t < self.time_interval[0]:
             return 0
         if t > self.time_interval[1]:
-            return self.n_layers
+            return self.n_layers - 1
         time_length = self.time_interval[1] - self.time_interval[0]
         dt = time_length / self.n_layers
         return int(torch.floor(t / dt))
@@ -144,7 +144,7 @@ class nODE(nn.Module):
         if t < self.time_interval[0]:
             return 0
         if t > self.time_interval[1]:
-            return self.n_layers
+            return self.n_layers - 1
         time_length = self.time_interval[1] - self.time_interval[0]
         dt = time_length / self.n_layers
         time_from_start = t - self.time_interval[0]
@@ -262,7 +262,7 @@ class nODE(nn.Module):
     def forward_integration(self, x, integration_time=None, outer_layers=True):
         if integration_time is None:
             time_intervals = torch.tensor([self.time_interval[0], self.time_interval[1]])
-            integration_interval = torch.tensor(time_intervals).float().type_as(x)
+            integration_interval = torch.tensor(time_intervals).clone().float().type_as(x)
         else:
             integration_interval = torch.tensor([integration_time[0], integration_time[1]])
         if self.first_layer_bool and outer_layers:

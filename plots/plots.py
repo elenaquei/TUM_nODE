@@ -268,7 +268,7 @@ def vector_field(anode, t_0):
             velocity = anode.right_hand_side(torch.Tensor([t_0]), torch.Tensor([xi, yi]).float()).detach()
             plt.arrow(xi, yi, velocity[0]*epsilon, velocity[1]*epsilon, head_width=0.5*epsilon, color='r')
 
-def plot_all_vectorfields(anode):
+def plot_all_vectorfields(anode, savefile = None):
     # plot all vector fields of a nODE
     #
     # INPUT:
@@ -302,11 +302,11 @@ def plot_all_vectorfields(anode):
         #if eigenvals[0] * eigenvals[1] < 0:    # the equilibrium is a saddle
         plt.plot(x0[0], x0[1], '*')
         for index in [0,1]:
-            if isinstance(eigenvals[index], np.complex64):
+            if np.imag(eigenvals[index]) != 0:
                 continue
             eig = eigenvects[:, index]
-            x_plot = np.array([x0[0] + eig[0], x0[0] + eig[0]])
-            y_plot = np.array([x0[1] + eig[1], x0[1] + eig[1]])
+            x_plot = np.array([x0[0] - 3*eig[0], x0[0] + 3*eig[0]])
+            y_plot = np.array([x0[1] - 3*eig[1], x0[1] + 3*eig[1]])
             if eigenvals[index] > 0:
                 plt.plot(x_plot, y_plot, 'r')
             else:
@@ -314,6 +314,9 @@ def plot_all_vectorfields(anode):
             plt.axis('equal')
         plt.xlim(plotlim)
         plt.ylim(plotlim)
+        if savefile is not None:
+            savefile_i = savefile + str(i) + '.png'
+            plt.savefig(savefile_i, bbox_inches='tight', dpi=100, format='png')
         plt.show()
         eigenvalues.append(eigenvals)
         eigenvectors.append(eigenvects)
@@ -331,4 +334,19 @@ def plot_dataloader(dataloader, n_points = 10):
     plt.scatter(data_1[:n_points, 0], data_1[:n_points, 1], edgecolor="#333", alpha=0.5)
     plt.xlim(plotlim[0], plotlim[1])
     plt.ylim(plotlim[0], plotlim[1])
+    plt.show()
+
+
+def plot_trajectories(anode, dataloader, n_points = 100):
+    for x_vector, y_vector in dataloader:
+        for x, y in zip(x_vector[:n_points, :], y_vector[:n_points, :]):
+            if all(y == torch.Tensor([-2, 0])):
+                color = 'orange'
+            else:
+                color = 'b'
+            trajectory_x = anode.trajectory(x).detach().numpy()
+            plt.plot(trajectory_x[:, 0], trajectory_x[:, 1], color=color)
+            plt.plot(x[0], x[1], '*', color=color)
+
+        break
     plt.show()

@@ -95,7 +95,7 @@ xy = torch.Tensor([1, 2, 3, 4, 5, 6])
 anode.lyapunov_system(t, xy)
 
 x = torch.Tensor([1, 2])
-lyap_int = np.max(anode.lyapunov_integration(x))
+lyap_int = np.max(anode.lyapunov_integration(x).detach().numpy())
 lyap_approx = anode.lyapunov_approx(x).detach().numpy()
 lyap_iterated = np.max(anode.lyapunov_informed_integration(x)[0].detach().numpy())
 print('Lyapunov comparison: ', lyap_int, lyap_approx, lyap_iterated)
@@ -112,7 +112,7 @@ for i in range(x_amount):
     for k in range(x_amount):
         x = torch.Tensor([X[i, k], Y[i, k]])
         lyap_approx_mat[i, k] = np.max(np.array([anode.lyapunov_approx(x).detach().numpy() for _ in range(6)]))
-        lyap_int_mat[i, k] = np.max(anode.lyapunov_integration(x))
+        lyap_int_mat[i, k] = np.max(anode.lyapunov_integration(x).detach().numpy())
         lyap_inf_int_mat[i, k] = np.max(anode.lyapunov_informed_integration(x)[0].detach().numpy())
     print('\nCompleted :', i/x_amount)
 

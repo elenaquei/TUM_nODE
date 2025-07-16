@@ -28,3 +28,9 @@ newnode_lyapunov.ipynb
 .idea/
 
 detect_separatrices.ipynb
+
+*.pyc
+
+lyapynov/__pycache__/
+
+*.ipynb

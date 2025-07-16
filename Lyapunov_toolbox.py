@@ -68,7 +68,7 @@ def linear_dynamics(node, derivative):
 
 def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functional.jacobian):
     '''
-    Full Maximal Lyapunov exponent computation, based on the lynear_dynamics function
+    Full Maximal Lyapunov exponent computation, based on the linear_dynamics function
     '''
     def numpy_rhs_from_node():
         def func(x,t):
@@ -99,8 +99,8 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
     L = np.zeros(x.size)
 
     #selection functionalities
-    select_Jac_int = lambda mat: np.reshape(mat[-1, x.size:], [x.size, x.size])
-    select_x_int = lambda mat: mat[-1, :x.size]
+    select_Jac_int = lambda mat: np.reshape(mat[x.size:], [x.size, x.size])
+    select_x_int = lambda mat: mat[:x.size]
     
     warnings.warn("only one iteration to test results")
     
@@ -110,8 +110,7 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
     
     for i in range(iters):
         time_array_iter = start_time + np.array([0, length_iter])
-        start_time = time_array_iter[-1]
-        x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(func, der), x_and_Jac_t, time_array_iter)
+        x_and_Jac_t = scipy.integrate.odeint(linear_dynamics(func, der), x_and_Jac_t, time_array_iter)[-1,:]
         
         Jac_t = select_Jac_int(x_and_Jac_t)
         
@@ -120,7 +119,7 @@ def local_FTLE(node, x, integration_time, dt = 0.5, der = torch.autograd.functio
         # for numerical stability, reset Y to the identity
 
         # lyapunov computation takes place
-        L += np.log(np.abs((np.diagonal(R_t)))) 
+        L += np.log(np.abs(np.sort(np.diagonal(R_t))))
         
     return L/integration_time
 
