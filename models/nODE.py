@@ -85,7 +85,7 @@ activations = {'tanh': nn.Tanh(),
                'identity' : nn.Identity()
                }
 derivatives_activations = {'tanh': tanh_prime,
-                           'identity': identity_prime # at the moment, we only care about tanh non-linearity
+                           'identity': identity_prime
                            }
 architectures = {'inside_weights': -1, 'outside_weights': 0, 'both': 1}
 
@@ -93,7 +93,7 @@ architectures = {'inside_weights': -1, 'outside_weights': 0, 'both': 1}
 class nODE(nn.Module):
 
     def __init__(self, ODE_dim, n_layers, architecture='inside_weights', time_interval=None, non_linearity='tanh',
-                 first_layer_bool=False, last_layer_bool=False, start_dim=None, end_dim=None):
+                 first_layer_bool=False, last_layer_bool=False, start_dim=None, end_dim=None, interpolation = None):
         super(nODE, self).__init__()
         if time_interval is None:
             time_interval = [0, 1]
@@ -117,6 +117,7 @@ class nODE(nn.Module):
         self.inside_weights = None
         self.outside_weights = None
         self.setup_weights()
+        self.interpolation = interpolation
         return
 
     def setup_weights(self):
@@ -155,33 +156,50 @@ class nODE(nn.Module):
         return layer_left, layer_right, interpolation
 
     def right_hand_side(self, t, x):
-        # layer = self.layer_selection(t)
-        layer_left, layer_right, time = self.layers_and_interpolation(t)
-        interpolation = lambda x0, x1 : x0 # (1 - time) * x0 + time * x1  ## NO INTERPOLATION! why was it there?
-        if architectures[self.architecture] == 1:  # outside architecture ahs no inside layer
-            out = x
-        else:
-            w1_t0 = self.inside_weights[layer_left].weight
-            b1_t0 = self.inside_weights[layer_left].bias
-            w1_t1 = self.inside_weights[layer_right].weight
-            b1_t1 = self.inside_weights[layer_right].bias
+        if self.interpolation:
+            layer_left, layer_right, time = self.layers_and_interpolation(t)
+            interpolation = lambda x0, x1 : (1 - time) * x0 + time * x1
+            ## it was there for a C0 vectorfield
+            if architectures[self.architecture] == 1:  # outside architecture ahs no inside layer
+                out = x
+            else:
+                w1_t0 = self.inside_weights[layer_left].weight
+                b1_t0 = self.inside_weights[layer_left].bias
+                w1_t1 = self.inside_weights[layer_right].weight
+                b1_t1 = self.inside_weights[layer_right].bias
 
-            w1_t = interpolation(w1_t0, w1_t1)
-            b1_t = interpolation(b1_t0, b1_t1)
-            out = x.matmul(w1_t.t()) + b1_t
-        out = self.non_linearity(out)
-        if architectures[self.architecture] == 0:  # inside architecture has no outside layer
-            out = out
+                w1_t = interpolation(w1_t0, w1_t1)
+                b1_t = interpolation(b1_t0, b1_t1)
+                out = x.matmul(w1_t.t()) + b1_t
+            out = self.non_linearity(out)
+            if architectures[self.architecture] == 0:  # inside architecture has no outside layer
+                out = out
+            else:
+                w2_t0 = self.outside_weights[layer_left].weight
+                b2_t0 = self.outside_weights[layer_left].bias
+                w2_t1 = self.outside_weights[layer_right].weight
+                b2_t1 = self.outside_weights[layer_right].bias
+
+                w2_t = interpolation(w2_t0, w2_t1)
+                b2_t = interpolation(b2_t0, b2_t1)
+
+                out = out.matmul(w2_t.t()) + b2_t
         else:
-            w2_t0 = self.outside_weights[layer_left].weight
-            b2_t0 = self.outside_weights[layer_left].bias
-            w2_t1 = self.outside_weights[layer_right].weight
-            b2_t1 = self.outside_weights[layer_right].bias
-            
-            w2_t = interpolation(w2_t0, w2_t1)
-            b2_t = interpolation(b2_t0, b2_t1)
-            
-            out = out.matmul(w2_t.t()) + b2_t
+            layer = self.layer_selection(t)
+            if architectures[self.architecture] == 1:  # outside architecture ahs no inside layer
+                out = x
+            else:
+                w1_t = self.inside_weights[layer].weight
+                b1_t = self.inside_weights[layer].bias
+                out = x.matmul(w1_t.t()) + b1_t
+            out = self.non_linearity(out)
+            if architectures[self.architecture] == 0:  # inside architecture has no outside layer
+                out = out
+            else:
+                w2_t = self.outside_weights[layer].weight
+                b2_t = self.outside_weights[layer].bias
+
+                out = out.matmul(w2_t.t()) + b2_t
         return out
 
     def derivative(self, t, x):
