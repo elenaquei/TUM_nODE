@@ -256,3 +256,79 @@ def train_to_classifier_imgs(model, trainer, dataloader, subfolder, num_epochs, 
         epoch_trained = epoch + plotfreq
         classification_levelsets(model, fig_name = fig_name_base + filename + str(epoch_trained), footnote = f'epoch = {epoch_trained}', plotlim = plotlim)
         print(f'\n Plot {epoch_trained =}')
+
+
+def vector_field(anode, t_0):
+    # plot of the vectorfield of the nODE active at time t_0
+    x = np.arange(-3,3,0.3)
+    y = np.arange(-3,3,0.3)
+    epsilon = 0.1
+    for xi in x:
+        for yi in y:
+            velocity = anode.right_hand_side(torch.Tensor([t_0]), torch.Tensor([xi, yi]).float()).detach()
+            plt.arrow(xi, yi, velocity[0]*epsilon, velocity[1]*epsilon, head_width=0.5*epsilon, color='r')
+
+def plot_all_vectorfields(anode):
+    # plot all vector fields of a nODE
+    #
+    # INPUT:
+    # nODE, with piecewise constant weights
+    #
+    # OUTPUT:
+    # plots of the time-piecewise constant vectorfields
+    # eigenvalues and eigenvectors associated with the only fixed point
+
+    oneD_iter = 20
+    n_plots = anode.n_layers + 1
+    plotlim = [-3, 3]
+
+    iter = oneD_iter**2
+    x_linspace, y_linspace = np.linspace(-3, 3, oneD_iter), np.linspace(-3, 3, oneD_iter)
+    X, Y = np.meshgrid(x_linspace, y_linspace)
+    positions = [torch.from_numpy(np.array([X.ravel()[i], Y.ravel()[i]])) for i in range(iter)]
+
+    time_points = np.linspace(anode.time_interval[0], anode.time_interval[1], n_plots)
+    dt = time_points[1] - time_points[0]
+    eigenvalues, eigenvectors = [], []
+    for t_0 in time_points[:-1]:
+        # t_1 = t_0 + dt
+        vector_field(anode, t_0)
+        i = anode.layer_selection(torch.Tensor([t_0]))
+        W = anode.inside_weights[i].weight.detach().numpy()
+        b = anode.inside_weights[i].bias.detach().numpy()
+        # print(W, b)
+        x0 = np.linalg.solve(W, -b) # find equilibrium
+        eigenvals, eigenvects = np.linalg.eig(W)
+        #if eigenvals[0] * eigenvals[1] < 0:    # the equilibrium is a saddle
+        plt.plot(x0[0], x0[1], '*')
+        for index in [0,1]:
+            if isinstance(eigenvals[index], np.complex64):
+                continue
+            eig = eigenvects[:, index]
+            x_plot = np.array([x0[0] + eig[0], x0[0] + eig[0]])
+            y_plot = np.array([x0[1] + eig[1], x0[1] + eig[1]])
+            if eigenvals[index] > 0:
+                plt.plot(x_plot, y_plot, 'r')
+            else:
+                plt.plot(x_plot, y_plot, 'g')
+            plt.axis('equal')
+        plt.xlim(plotlim)
+        plt.ylim(plotlim)
+        plt.show()
+        eigenvalues.append(eigenvals)
+        eigenvectors.append(eigenvects)
+    return eigenvalues, eigenvectors
+
+
+def plot_dataloader(dataloader, n_points = 10):
+    # give a dataloader in 2D, select the first n_points (default 10) and plot them. color-coded w.r.t. the label
+    x, y = dataloader.dataset.tensors
+    plotlim = [-3, 3]
+    data_0 = x[y[:, 0] > 0]
+    data_1 = x[y[:, 0] < 0]
+    plt.figure(figsize=(5, 5), dpi=100)
+    plt.scatter(data_0[:n_points, 0], data_0[:n_points, 1], edgecolor="#333", alpha=0.5)
+    plt.scatter(data_1[:n_points, 0], data_1[:n_points, 1], edgecolor="#333", alpha=0.5)
+    plt.xlim(plotlim[0], plotlim[1])
+    plt.ylim(plotlim[0], plotlim[1])
+    plt.show()

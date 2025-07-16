@@ -12,10 +12,9 @@ from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 from matplotlib import rc
 
-from plots.plots import loss_evolution, comparison_plot
+from plots.plots import loss_evolution, comparison_plot, vector_field
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.colors import to_rgb
-
 
 '''
 Creates gif of existing level_set images and creates fittig loss plots to combine both in a subplot
@@ -199,3 +198,87 @@ def normalize(x):
     : return: Numpy array of normalized data
     """
     return np.array((x - np.min(x)) / (np.max(x) - np.min(x)))
+
+
+def trajectory_and_vectorfield_gif(anode, x, y, n_times = 100, n_points = 100, gif_name = 'forward_orbit.gif'):
+    from torchdiffeq import odeint
+    import imageio.v2 as imageio
+    import os
+
+    # precompute all orbits
+    time_steps = torch.linspace(anode.time_interval[0], anode.time_interval[1], n_times)
+    orbits = []
+    for i in range(n_points):
+        xi = x[i, :]
+        out = odeint(anode.right_hand_side, xi, time_steps, method='euler')
+        orbits.append(out)
+
+    images = []
+    filename = ('temp_for_gif.png')
+    old_layer = -1
+    fig = plt.figure(figsize=plt.figaspect(0.5))
+    ax1 = fig.add_subplot(1, 2, 1, projection='3d')
+    ax2 = fig.add_subplot(1, 2, 2)
+    plotlim = [-3, 3]
+
+    for j in range(1, n_times):
+
+        # plot ORBITS in ax1
+        ax1.cla()
+        for i in range(100):
+            X = orbits[i][:j + 1, 0]
+            Y = orbits[i][:j + 1, 1]
+            if y[i][0] > 0:
+                color = 'b'
+            else:
+                color = 'orange'
+            ax1.plot(time_steps.detach().numpy()[:j + 1], X.detach().numpy(), Y.detach().numpy(), color=color,
+                     alpha=0.5)
+            ax1.plot(time_steps.detach().numpy()[j], X.detach().numpy()[j], Y.detach().numpy()[j], 'o', color=color,
+                     alpha=0.5)
+        ax1.set(xlabel='time', ylabel='X', zlabel='Y', ylim=plotlim, xlim=anode.time_interval, zlim=plotlim)
+        ax1.view_init(elev=20, azim=-15)
+
+        # plot vector field in ax2
+        time = j / n_times * anode.time_interval[1] + anode.time_interval[0]
+        layer_i = anode.layer_selection(torch.Tensor([time]))
+        if layer_i > old_layer:
+            # update the plot only if necessary
+            ax2.cla()
+            old_layer = layer_i
+            vector_field(anode, time)
+            W = anode.inside_weights[layer_i].weight.detach().numpy()
+            b = anode.inside_weights[layer_i].bias.detach().numpy()
+            x0 = np.linalg.solve(W, -b)  # find equilibrium
+            eigenvals, eigenvects = np.linalg.eig(W)
+            plt.plot(x0[0], x0[1], '*')
+            for index in [0, 1]:
+                if isinstance(eigenvals[index], np.complex64):
+                    continue
+                eig = eigenvects[:, index]
+                x_plot = np.array([x0[0] + eig[0], x0[0] + eig[0]])
+                y_plot = np.array([x0[1] + eig[1], x0[1] + eig[1]])
+                if eigenvals[index] > 0:
+                    ax2.plot(x_plot, y_plot, 'r')
+                else:
+                    ax2.plot(x_plot, y_plot, 'g')
+            ax2.axis('equal')
+            ax2.set_xlim(plotlim)
+            ax2.set_xlim(plotlim)
+
+        # save
+        plt.savefig(filename)
+        images.append(imageio.imread(filename))
+    plt.show()
+    imageio.mimsave(gif_name, images, fps=1)
+    os.remove(filename)
+
+
+# Create GIF
+def create_gif_from_files(file_names, image_dir, gif_name='gif.gif'):
+    images = []
+    for name in file_names:
+        filename = os.path.join(image_dir, name)
+        images.append(imageio.imread(filename))
+
+    imageio.mimsave(gif_name, images, fps=1)
