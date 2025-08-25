@@ -252,7 +252,8 @@ class nODE(nn.Module):
             x_in = x
         dt = self.compute_dt()
         out = odeint(self.right_hand_side, x_in, integration_interval, method='euler', options={'step_size': dt})
-        out = out[1, :, :]
+        if len(out.shape) == 3:
+            out = out[1, :, :]
         if self.last_layer_bool:
             x_out = self.last_layer(out)
         else:
@@ -262,7 +263,7 @@ class nODE(nn.Module):
     def forward_integration(self, x, integration_time=None, outer_layers=True):
         if integration_time is None:
             time_intervals = torch.tensor([self.time_interval[0], self.time_interval[1]])
-            integration_interval = torch.tensor(time_intervals).clone().float().type_as(x)
+            integration_interval = torch.tensor(time_intervals).clone().detach().float().type_as(x)
         else:
             integration_interval = torch.tensor([integration_time[0], integration_time[1]])
         if self.first_layer_bool and outer_layers:

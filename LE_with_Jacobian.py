@@ -20,7 +20,7 @@ def LEs(input, node, time_interval=None):
         # fix the node so it is just a input to output of the other variable
         input_to_output_lambda = lambda x: node.flow(x, time_interval)[-1]
     else:
-        input_to_output_lambda = lambda x: node.forward_integration(x)
+        input_to_output_lambda = lambda x: node.forward_integration(x)[-1]
 
     # Compute the Jacobian matrix
     J = torch.autograd.functional.jacobian(input_to_output_lambda, input)

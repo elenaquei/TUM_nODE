@@ -142,11 +142,6 @@ ross_func, ross_der = rossler()
 Rossler = ContinuousDS(x0, t0, ross_func, ross_der, dt)
 
 
-# %%
-n_Steps_ross = 10**5
-LCE_rossler, history_rossler = LCE(Rossler, 3, 0, n_Steps_ross, True)
-print(f'the Rossler integration of all the LCEs yields {LCE_rossler} compared to the literature values of  0.0714, 0, -5.3943')
-
 
 # %%
 def compute_orbit(dynamical_system, n_steps):
@@ -159,6 +154,13 @@ def compute_orbit(dynamical_system, n_steps):
 
 
 # %%
+n_Steps_ross = 10**4*4
+LCE_rossler, history_rossler = LCE(Rossler, 3, 0, n_Steps_ross, True)
+print(f'the Rossler integration of all the LCEs yields {LCE_rossler} compared to the literature values of  0.0714, 0, -5.3943')
+
+
+
+# %%
 
 Rossler = ContinuousDS(x0, t0, ross_func, ross_der, dt)
 y = compute_orbit(Rossler, 1000)
@@ -166,14 +168,12 @@ y = compute_orbit(Rossler, 1000)
 fig = plt.figure(figsize=plt.figaspect(0.5))
 ax1 = fig.add_subplot(1, 2, 1, projection='3d')
 ax1.plot(y[0, :], y[1, :], y[2, :], '-')
-plt.show()
 ax2 = fig.add_subplot(1, 2, 2)
-time_vec = np.linspace(0, n_Steps_ross*dt, np.shape(history_rossler)[1])
-ax2.plot(history_rossler, time_vec)
+time_vec = np.linspace(0, n_Steps_ross*dt, np.shape(history_rossler)[0])
+ax2.plot(time_vec, history_rossler[:,0:2])
 l1, l2 = 0.0714, 0
-ax2.plot(l1 + 0*time_vec, time_vec)
-ax2.plot(l2 + 0*time_vec, time_vec)
-ax2.xlabel("Number of time steps")
-ax2.ylabel("LCE")
+ax2.plot(time_vec, l1 + 0*time_vec, 'b')
+ax2.plot(time_vec, l2 + 0*time_vec, 'b')
+ax2.set_xlabel("Time")
+ax2.set_ylabel("LCE")
 plt.show()
-

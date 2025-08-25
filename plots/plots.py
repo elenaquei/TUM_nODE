@@ -5,6 +5,7 @@
 """
 ##------------#
 import matplotlib.pyplot as plt
+viridis = plt.get_cmap('viridis')
 from matplotlib import rc
 import numpy as np
 import torch
@@ -350,3 +351,28 @@ def plot_trajectories(anode, dataloader, n_points = 100):
 
         break
     plt.show()
+
+# %% [markdown]
+# A function to create a heat map once you know how to compute the "heat" item through a numpy function
+
+# %%
+def heat_map(n_1Dpoints, lambda_func, savefile = None, ax = None):
+    x = np.linspace(-3, 3, n_1Dpoints)
+    y = np.linspace(-3, 3, n_1Dpoints)
+    X, Y = np.meshgrid(x, y)
+    computed_func = 0*X
+    for i in range(n_1Dpoints):
+        for k in range(n_1Dpoints):
+            x = np.array([X[i, k], Y[i, k]])
+            computed_func[i, k] = lambda_func(x)
+        print(f'Completed : {i/n_1Dpoints:.2f}')
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
+    anodeimg = ax.imshow(computed_func, origin='upper', extent=(-3, 3, -3, 3), cmap = viridis)
+    vmin, vmax = anodeimg.get_clim()
+    # ax.colorbar()
+    if savefile:
+        plt.savefig(savefile)
+    plt.show()
+    return computed_func
